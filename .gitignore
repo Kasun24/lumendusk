@@ -26,3 +26,6 @@ env/
 # Local config / runtime
 config.local.*
 *.log
+
+# Local dev context — not for publishing
+CLAUDE.md
