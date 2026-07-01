@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lumendusk"
+version = "0.0.1"
+description = "Automatic dark/light theme and night light for your desktop, driven by time of day."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Kasun Sampath" }]
+keywords = ["theme", "dark-mode", "night-light", "cinnamon", "linux-mint", "daemon"]
+dependencies = []
+
+[project.optional-dependencies]
+# Sunrise/sunset from location. Enable with: pip install lumendusk[sun]
+sun = ["astral>=3.2"]
+
+[project.scripts]
+lumendusk = "lumendusk.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

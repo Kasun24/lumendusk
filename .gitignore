@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / build artifacts
+*.deb
+*.snap
+*.flatpak
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local config / runtime
+config.local.*
+*.log
