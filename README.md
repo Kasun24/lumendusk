@@ -20,9 +20,18 @@ macOS (menu-bar extra).
 
 ## Status
 
-🚧 Early development — Phase 1 (Linux Mint). The engine and a first Cinnamon
-applet exist; sun/fixed day-night detection, theme + night-light switching, and
-a brightness read/set tool are in place.
+🚧 Early development — Phase 1 (Linux Mint). Working today:
+
+- Sun (offline, via `astral`) or fixed-time day/night detection.
+- Automatic GTK theme + `color-scheme` switching and night light on/off.
+- A brightness read/set/list tool across sysfs/brightnessctl, ddcutil, and
+  xrandr backends (Step B1).
+- A Cinnamon **panel applet** with a brightness slider, day/night presets, and a
+  **"Pause automation"** switch (freeze everything, e.g. while watching a movie).
+- A background daemon that **autostarts on login**.
+
+Next: an applet **settings panel** and persistence (Step B2), then brightness on
+day/night transitions (Step B3).
 
 ## How it works
 

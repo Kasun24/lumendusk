@@ -17,6 +17,11 @@ dependencies = []
 # Sunrise/sunset from location. Enable with: pip install lumendusk[sun]
 sun = ["astral>=3.2"]
 
+[project.urls]
+Homepage = "https://github.com/Kasun24/lumendusk"
+Repository = "https://github.com/Kasun24/lumendusk"
+Issues = "https://github.com/Kasun24/lumendusk/issues"
+
 [project.scripts]
 lumendusk = "lumendusk.__main__:main"
 
