@@ -38,6 +38,14 @@ LumenduskApplet.prototype = {
         this.menu = new Applet.AppletPopupMenu(this, orientation);
         this.menuManager.addMenu(this.menu);
 
+        // Refresh the pause switch each time the menu opens, in case it was
+        // changed from the CLI or another instance.
+        this.menu.connect("open-state-changed", (menu, open) => {
+            if (open && this._pauseSwitch) {
+                this._pauseSwitch.setToggleState(this._readPaused());
+            }
+        });
+
         this._brightnessDebounce = 0;
         this._buildMenu();
     },
@@ -47,6 +55,15 @@ LumenduskApplet.prototype = {
 
         let title = new PopupMenu.PopupMenuItem("Lumendusk", { reactive: false });
         this.menu.addMenuItem(title);
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        // Pause automation (e.g. while watching a movie): freezes theme, night
+        // light, and brightness where they are until switched back on.
+        this._pauseSwitch = new PopupMenu.PopupSwitchMenuItem(
+            "Pause automation", this._readPaused());
+        this._pauseSwitch.connect("toggled", (item, value) =>
+            this._runEngine(value ? "pause" : "resume"));
+        this.menu.addMenuItem(this._pauseSwitch);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         // Apply the correct phase right now (theme + night light + brightness).
@@ -97,6 +114,21 @@ LumenduskApplet.prototype = {
 
     _runEngine: function (args) {
         Util.spawnCommandLine(ENGINE + " " + args);
+    },
+
+    _readPaused: function () {
+        // Read paused state straight from config.toml (cheap, no subprocess).
+        try {
+            let path = GLib.get_user_config_dir() + "/lumendusk/config.toml";
+            let [ok, data] = GLib.file_get_contents(path);
+            if (!ok) return false;
+            let text = (data instanceof Uint8Array)
+                ? imports.byteArray.toString(data)
+                : ("" + data);
+            return /paused\s*=\s*true/.test(text);
+        } catch (e) {
+            return false;
+        }
     },
 
     _openConfig: function () {

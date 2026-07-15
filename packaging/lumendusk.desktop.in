@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lumendusk
+Comment=Automatic dark/light theme, night light, and brightness by time of day
+Exec=@ENGINE@
+Icon=weather-clear-night
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
+Categories=Utility;

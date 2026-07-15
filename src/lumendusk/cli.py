@@ -40,7 +40,29 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Percent 0–100 (only for 'set').")
     b.add_argument("--monitor", default="all",
                    help="Monitor id (see 'brightness list'), or 'all'.")
+
+    sub.add_parser("pause", help="Freeze automation (e.g. while watching a movie).")
+    sub.add_parser("resume", help="Resume automation and snap to the current state.")
+    sub.add_parser("toggle", help="Toggle the paused state.")
+    sub.add_parser("status", help="Print current mode, phase, and paused state.")
     return parser
+
+
+def _set_paused(paused: bool) -> int:
+    cfg = config_mod.load()
+    cfg.paused = paused
+    config_mod.save(cfg)
+    print(f"[lumendusk] automation {'paused' if paused else 'resumed'}.")
+    return 0
+
+
+def _status() -> int:
+    from .daemon import current_phase  # local import avoids a cycle at import time
+    cfg = config_mod.load()
+    phase = current_phase(cfg).value
+    state = "paused" if cfg.paused else ("enabled" if cfg.enabled else "disabled")
+    print(f"mode={cfg.mode} phase={phase} state={state}")
+    return 0
 
 
 def _brightness_command(args: argparse.Namespace) -> int:
@@ -84,4 +106,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "brightness":
         return _brightness_command(args)
+    if args.command == "pause":
+        return _set_paused(True)
+    if args.command == "resume":
+        return _set_paused(False)
+    if args.command == "toggle":
+        return _set_paused(not config_mod.load().paused)
+    if args.command == "status":
+        return _status()
     return run_daemon(interval=args.interval, once=args.once)

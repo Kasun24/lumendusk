@@ -64,14 +64,19 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
 
     cfg = config_mod.load()
     last: Phase | None = None
+    was_paused = cfg.paused
     last_wall = time.time()
 
-    # Startup: force one apply so the desktop matches the current phase.
-    phase = current_phase(cfg)
-    apply_phase(phase, cfg)
-    last = phase
-    print(f"[lumendusk] started ({cfg.mode} mode); phase={phase.value}, "
-          f"checking every {interval}s.")
+    # Startup: apply once so the desktop matches the current phase — unless the
+    # user left automation paused.
+    if cfg.paused:
+        print("[lumendusk] started paused; automation frozen until resume.")
+    else:
+        phase = current_phase(cfg)
+        apply_phase(phase, cfg)
+        last = phase
+        print(f"[lumendusk] started ({cfg.mode} mode); phase={phase.value}, "
+              f"checking every {interval}s.")
 
     while True:
         try:
@@ -87,7 +92,24 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
         last_wall = now_wall
 
         cfg = config_mod.load()  # cheap; lets applet/config edits take effect
+
+        # Paused: freeze everything where it is, change nothing.
+        if cfg.paused:
+            if not was_paused:
+                print("[lumendusk] paused; automation frozen.")
+            was_paused = True
+            continue
+
         phase = current_phase(cfg)
+
+        # Just resumed from pause: snap to the correct current state.
+        if was_paused:
+            print("[lumendusk] resumed; applying current phase.")
+            apply_phase(phase, cfg)
+            last = phase
+            was_paused = False
+            continue
+
         if phase != last:
             print(f"[lumendusk] transition {last.value if last else '?'} → "
                   f"{phase.value}")

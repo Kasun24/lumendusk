@@ -33,6 +33,20 @@ echo "    $APPLET_DEST"
 mkdir -p "$APPLET_DEST"
 cp -r "$APPLET_SRC/." "$APPLET_DEST/"
 
+echo "==> Installing autostart entry (runs the daemon on login)…"
+AUTOSTART_DIR="$HOME/.config/autostart"
+mkdir -p "$AUTOSTART_DIR"
+sed "s|@ENGINE@|$VENV/bin/lumendusk|g" \
+    "$ROOT/packaging/lumendusk.desktop.in" > "$AUTOSTART_DIR/lumendusk.desktop"
+
+echo "==> Starting the daemon now (if not already running)…"
+if ! pgrep -f "$VENV/bin/lumendusk\$" >/dev/null 2>&1; then
+    setsid "$VENV/bin/lumendusk" >/dev/null 2>&1 < /dev/null &
+    echo "    started."
+else
+    echo "    already running."
+fi
+
 cat <<EOF
 
 Done.
@@ -43,9 +57,16 @@ Next steps:
   3. Click the new panel icon → "Open config file" to set your location
      (latitude/longitude) or fixed times.
 
+The background daemon is now running and will start automatically on login.
+Manage it from Cinnamon's "Startup Applications", or:
+  pkill -f "$VENV/bin/lumendusk\$"                 # stop it now
+  rm ~/.config/autostart/lumendusk.desktop         # disable autostart
+
 The engine lives in its own venv ($VENV) — nothing was installed into your
 system Python. Command line, if you want it:
-  $VENV/bin/lumendusk --once
+  $VENV/bin/lumendusk --once      # apply the correct state right now
+  $VENV/bin/lumendusk status      # mode / phase / paused
+  $VENV/bin/lumendusk pause       # freeze automation (movie mode)
 
 Optional system tools for full functionality:
   - ddcutil       (external-monitor brightness over DDC/CI; add yourself to the

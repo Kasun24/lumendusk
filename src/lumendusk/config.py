@@ -33,6 +33,7 @@ class Config:
     # day/night decision
     mode: str = "sun"                # "sun" (astral) or "fixed"
     enabled: bool = True             # master on/off
+    paused: bool = False             # runtime: freeze automation (e.g. movie)
     latitude: float = 0.0
     longitude: float = 0.0
     dark_start: str = "19:00"        # fixed mode: when night begins
@@ -63,6 +64,7 @@ def _from_toml(data: dict) -> Config:
     return Config(
         mode=data.get("mode", d.mode),
         enabled=data.get("enabled", d.enabled),
+        paused=data.get("paused", d.paused),
         latitude=loc.get("latitude", d.latitude),
         longitude=loc.get("longitude", d.longitude),
         dark_start=fixed.get("dark_start", d.dark_start),
@@ -90,7 +92,10 @@ def _to_toml(c: Config) -> str:
         "# mode = \"sun\" uses your latitude/longitude (offline, via astral).\n"
         "# mode = \"fixed\" uses the [fixed] times below.\n\n"
         f"mode = {s(c.mode)}\n"
-        f"enabled = {b(c.enabled)}\n\n"
+        f"enabled = {b(c.enabled)}\n"
+        "# paused freezes all automation where it is (e.g. while watching a\n"
+        "# movie). Toggle it with `lumendusk pause` / `lumendusk resume`.\n"
+        f"paused = {b(c.paused)}\n\n"
         "[location]\n"
         f"latitude = {c.latitude}\n"
         f"longitude = {c.longitude}\n\n"
