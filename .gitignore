@@ -29,3 +29,7 @@ config.local.*
 
 # Local dev context — not for publishing
 CLAUDE.md
+
+# Local editor/agent settings
+.claude/settings.local.json
+.claude/*.tmp.*
