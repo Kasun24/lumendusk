@@ -57,8 +57,8 @@ LumenduskApplet.prototype = {
         this.menu.addMenuItem(title);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // Pause automation (e.g. while watching a movie): freezes theme, night
-        // light, and brightness where they are until switched back on.
+        // Pause automation (e.g. while watching a movie): turns night light off
+        // for true colors and freezes theme + brightness until switched back on.
         this._pauseSwitch = new PopupMenu.PopupSwitchMenuItem(
             "Pause automation", this._readPaused());
         this._pauseSwitch.connect("toggled", (item, value) =>
@@ -82,12 +82,14 @@ LumenduskApplet.prototype = {
             this._onBrightnessChanged(value));
         this.menu.addMenuItem(this._brightnessSlider);
 
-        let dayItem = new PopupMenu.PopupMenuItem("Apply day brightness preset");
-        dayItem.connect("activate", () => this._runEngine("brightness day"));
+        // Full-mode overrides: theme + night light + brightness together. These
+        // stick until the next scheduled day/night transition.
+        let dayItem = new PopupMenu.PopupMenuItem("Switch to Day mode");
+        dayItem.connect("activate", () => this._runEngine("mode day"));
         this.menu.addMenuItem(dayItem);
 
-        let nightItem = new PopupMenu.PopupMenuItem("Apply night brightness preset");
-        nightItem.connect("activate", () => this._runEngine("brightness night"));
+        let nightItem = new PopupMenu.PopupMenuItem("Switch to Night mode");
+        nightItem.connect("activate", () => this._runEngine("mode night"));
         this.menu.addMenuItem(nightItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());

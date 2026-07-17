@@ -70,7 +70,11 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
     # Startup: apply once so the desktop matches the current phase — unless the
     # user left automation paused.
     if cfg.paused:
-        print("[lumendusk] started paused; automation frozen until resume.")
+        # Paused = manual/movie mode: drop night light for true colors, but
+        # leave theme + brightness frozen wherever the user has them.
+        if cfg.nightlight_enabled:
+            set_nightlight(False)
+        print("[lumendusk] started paused; night light off, theme/brightness frozen.")
     else:
         phase = current_phase(cfg)
         apply_phase(phase, cfg)
@@ -93,10 +97,13 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
 
         cfg = config_mod.load()  # cheap; lets applet/config edits take effect
 
-        # Paused: freeze everything where it is, change nothing.
+        # Paused: freeze theme + brightness where they are, but turn night light
+        # off (true colors for movies). Do the toggle once, on entering pause.
         if cfg.paused:
             if not was_paused:
-                print("[lumendusk] paused; automation frozen.")
+                if cfg.nightlight_enabled:
+                    set_nightlight(False)
+                print("[lumendusk] paused; night light off, theme/brightness frozen.")
             was_paused = True
             continue
 
