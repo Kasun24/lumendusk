@@ -43,10 +43,19 @@ def _fallback(on: bool, temperature: int) -> None:
 
 
 def set_nightlight(on: bool, temperature: int = 4000) -> None:
-    ok = _gsettings_set(_SCHEMA, "night-light-enabled", "true" if on else "false")
-    if ok and on:
+    if on:
         # Cinnamon stores temperature as a uint; gsettings accepts the bare int.
         _gsettings_set(_SCHEMA, "night-light-temperature", str(int(temperature)))
+        # Force 'always' so the warm tint follows *our* enable toggle. In the
+        # default 'auto' mode Cinnamon runs its own location-based sunrise/sunset
+        # schedule, which disagrees with lumendusk's day/night times and leaves
+        # the screen warm during daylight. We own the schedule; Cinnamon just
+        # applies the tint when we say so.
+        _gsettings_set(_SCHEMA, "night-light-schedule-mode", "always")
+        ok = _gsettings_set(_SCHEMA, "night-light-enabled", "true")
+    else:
+        # The enabled flag is the master switch; false = off regardless of mode.
+        ok = _gsettings_set(_SCHEMA, "night-light-enabled", "false")
     if not ok:
         _fallback(on, temperature)
     print(f"[lumendusk] night light → {'on' if on else 'off'}"
