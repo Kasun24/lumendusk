@@ -7,6 +7,9 @@
     lumendusk brightness set 60    set brightness to 60 %
     lumendusk brightness day       apply the day preset from config
     lumendusk brightness night     apply the night preset from config
+    lumendusk mode day             switch to full day mode now (manual override)
+    lumendusk mode night           switch to full night mode now (manual override)
+    lumendusk pause / resume       freeze automation (night light off) / resume
 
 Most brightness commands accept ``--monitor <id>`` (default: all).
 """
@@ -45,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("resume", help="Resume automation and snap to the current state.")
     sub.add_parser("toggle", help="Toggle the paused state.")
     sub.add_parser("status", help="Print current mode, phase, and paused state.")
+
+    m = sub.add_parser("mode", help="Manually switch to full day/night mode now.")
+    m.add_argument("which", choices=["day", "night"])
     return parser
 
 
@@ -52,7 +58,33 @@ def _set_paused(paused: bool) -> int:
     cfg = config_mod.load()
     cfg.paused = paused
     config_mod.save(cfg)
-    print(f"[lumendusk] automation {'paused' if paused else 'resumed'}.")
+    # Act immediately so the applet feels responsive (the daemon reconciles too).
+    if paused:
+        # Movie/manual pause: night light off for true colors; theme + brightness
+        # stay frozen wherever they are.
+        if cfg.nightlight_enabled:
+            from .apply import set_nightlight
+            set_nightlight(False)
+        print("[lumendusk] paused; night light off, theme/brightness frozen.")
+    else:
+        # Resume: snap straight to the correct current phase.
+        from .daemon import apply_phase, current_phase
+        apply_phase(current_phase(cfg), cfg)
+        print("[lumendusk] resumed; applied current phase.")
+    return 0
+
+
+def _apply_mode(which: str) -> int:
+    """Manually apply full day or night mode (theme + night light + brightness).
+
+    A manual override: the transition-only daemon leaves it alone until the next
+    scheduled day/night transition.
+    """
+    from .daemon import Phase, apply_phase
+    cfg = config_mod.load()
+    phase = Phase.NIGHT if which == "night" else Phase.DAY
+    apply_phase(phase, cfg)
+    print(f"[lumendusk] switched to {which} mode (manual).")
     return 0
 
 
@@ -114,4 +146,6 @@ def main(argv: list[str] | None = None) -> int:
         return _set_paused(not config_mod.load().paused)
     if args.command == "status":
         return _status()
+    if args.command == "mode":
+        return _apply_mode(args.which)
     return run_daemon(interval=args.interval, once=args.once)
