@@ -23,7 +23,10 @@ macOS (menu-bar extra).
 🚧 Early development — Phase 1 (Linux Mint). Working today:
 
 - Sun (offline, via `astral`) or fixed-time day/night detection.
-- Automatic GTK theme + `color-scheme` switching and night light on/off.
+- **Whole-desktop dark/light switching** — driven by Mint's own style catalog,
+  it moves the shell, panel, window borders, GTK/GTK4 apps, Flatpak apps (XApp
+  portal), icons and accent together (not just the GTK theme), and night light
+  on/off. There's a **Dark mode** switch in the applet too.
 - A brightness read/set/list tool across sysfs/brightnessctl, ddcutil, and
   xrandr backends (Step B1).
 - A Cinnamon **panel applet** with a brightness slider, day/night presets, and a
@@ -64,6 +67,7 @@ lumendusk brightness list        # show monitors + which backend each uses
 lumendusk brightness get         # current brightness
 lumendusk brightness set 60      # set brightness to 60%
 lumendusk brightness day|night   # apply the day/night brightness preset
+lumendusk appearance toggle      # flip whole-desktop dark <-> light (or dark|light|status)
 
 # From a source checkout without installing:
 PYTHONPATH=src python3 -m lumendusk --once

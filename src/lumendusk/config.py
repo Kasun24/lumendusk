@@ -39,7 +39,12 @@ class Config:
     dark_start: str = "19:00"        # fixed mode: when night begins
     light_start: str = "07:00"       # fixed mode: when day begins
 
-    # theme
+    # theme / appearance. The dark/light switch applies a whole-desktop Mint
+    # style (system UI + apps). ``theme_accent`` blank = auto-detect the current
+    # accent and keep it; set e.g. "yaru"/"orange"/"aqua" to force one.
+    theme_accent: str = ""
+    # Legacy full theme names — kept for backward compatibility with older
+    # config files; no longer used to switch (the style catalog drives it now).
     theme_light: str = "Mint-Y"
     theme_dark: str = "Mint-Y-Dark"
 
@@ -69,6 +74,7 @@ def _from_toml(data: dict) -> Config:
         longitude=loc.get("longitude", d.longitude),
         dark_start=fixed.get("dark_start", d.dark_start),
         light_start=fixed.get("light_start", d.light_start),
+        theme_accent=theme.get("accent", d.theme_accent),
         theme_light=theme.get("light", d.theme_light),
         theme_dark=theme.get("dark", d.theme_dark),
         nightlight_enabled=night.get("enabled", d.nightlight_enabled),
@@ -103,8 +109,10 @@ def _to_toml(c: Config) -> str:
         f"dark_start = {s(c.dark_start)}\n"
         f"light_start = {s(c.light_start)}\n\n"
         "[theme]\n"
-        f"light = {s(c.theme_light)}\n"
-        f"dark = {s(c.theme_dark)}\n\n"
+        "# Whole-desktop dark/light (system UI + apps). accent = \"\" keeps your\n"
+        "# current accent; or force one: yaru, orange, aqua, teal, blue, grey,\n"
+        "# sand, red, pink, purple, navy, cyan, green.\n"
+        f"accent = {s(c.theme_accent)}\n\n"
         "[nightlight]\n"
         f"enabled = {b(c.nightlight_enabled)}\n"
         f"temperature = {c.nightlight_temperature}\n\n"

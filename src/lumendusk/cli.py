@@ -51,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("mode", help="Manually switch to full day/night mode now.")
     m.add_argument("which", choices=["day", "night"])
+
+    a = sub.add_parser("appearance",
+                       help="Dark/light desktop switch (system UI + apps).")
+    a.add_argument("which", choices=["dark", "light", "toggle", "status"])
     return parser
 
 
@@ -72,6 +76,17 @@ def _set_paused(paused: bool) -> int:
         apply_phase(current_phase(cfg), cfg)
         print("[lumendusk] resumed; applied current phase.")
     return 0
+
+
+def _appearance_command(which: str) -> int:
+    """Standalone dark/light switch (separate from the day/night theme path)."""
+    from .apply import appearance
+    if which == "status":
+        appearance.status()
+        return 0
+    if which == "toggle":
+        which = "light" if appearance.current_mode() == "dark" else "dark"
+    return 0 if appearance.set_mode(which) else 1
 
 
 def _apply_mode(which: str) -> int:
@@ -148,4 +163,6 @@ def main(argv: list[str] | None = None) -> int:
         return _status()
     if args.command == "mode":
         return _apply_mode(args.which)
+    if args.command == "appearance":
+        return _appearance_command(args.which)
     return run_daemon(interval=args.interval, once=args.once)
