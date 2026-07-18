@@ -228,24 +228,26 @@ def apply_variant(v: Variant) -> bool:
     return ok
 
 
-def set_mode(mode: str) -> bool:
-    """Switch the whole desktop to 'light' or 'dark', keeping the accent."""
+def set_mode(mode: str, accent: str | None = None) -> bool:
+    """Switch the whole desktop to 'light' or 'dark'.
+
+    ``accent`` None/"" keeps the current accent (auto-detected); otherwise it
+    forces a specific accent name (e.g. "yaru", "orange", "aqua").
+    """
     catalog = _load_catalog()
     if not catalog:
         print("[appearance] no Mint style catalog found; is this Linux Mint?")
         return False
     cur = detect_variant(catalog)
-    if cur is None:
-        print("[appearance] could not detect the current style.")
-        return False
-    target = variant_for(catalog, cur.family, cur.accent, mode)
+    family = cur.family if cur else "Mint-Y"
+    use_accent = accent or (cur.accent if cur else "yaru")
+    target = (variant_for(catalog, family, use_accent, mode)
+              # e.g. Mint-X has no dark variant, or a forced accent isn't in this
+              # family — fall back to Mint-Y, then to the default yaru accent.
+              or variant_for(catalog, "Mint-Y", use_accent, mode)
+              or variant_for(catalog, "Mint-Y", "yaru", mode))
     if target is None:
-        # e.g. Mint-X has no dark variant — fall back to the Mint-Y accent.
-        target = variant_for(catalog, "Mint-Y", cur.accent, mode) \
-            or variant_for(catalog, "Mint-Y", "yaru", mode)
-    if target is None:
-        print(f"[appearance] no '{mode}' variant available for "
-              f"{cur.family}/{cur.accent}.")
+        print(f"[appearance] no '{mode}' variant for {family}/{use_accent}.")
         return False
     return apply_variant(target)
 
