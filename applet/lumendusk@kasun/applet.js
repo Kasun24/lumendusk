@@ -15,6 +15,7 @@ const Applet = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
 const Util = imports.misc.util;
 const GLib = imports.gi.GLib;
+const Gio = imports.gi.Gio;
 const Mainloop = imports.mainloop;
 
 // The engine runs from its own venv (created by install.sh), so we don't touch
@@ -41,9 +42,9 @@ LumenduskApplet.prototype = {
         // Refresh the pause switch each time the menu opens, in case it was
         // changed from the CLI or another instance.
         this.menu.connect("open-state-changed", (menu, open) => {
-            if (open && this._pauseSwitch) {
-                this._pauseSwitch.setToggleState(this._readPaused());
-            }
+            if (!open) return;
+            if (this._pauseSwitch) this._pauseSwitch.setToggleState(this._readPaused());
+            if (this._darkSwitch) this._darkSwitch.setToggleState(this._readDark());
         });
 
         this._brightnessDebounce = 0;
@@ -64,6 +65,14 @@ LumenduskApplet.prototype = {
         this._pauseSwitch.connect("toggled", (item, value) =>
             this._runEngine(value ? "pause" : "resume"));
         this.menu.addMenuItem(this._pauseSwitch);
+
+        // Dark mode: standalone whole-desktop dark/light switch (system UI +
+        // apps), independent of the day/night automation. A manual override.
+        this._darkSwitch = new PopupMenu.PopupSwitchMenuItem(
+            "Dark mode", this._readDark());
+        this._darkSwitch.connect("toggled", (item, value) =>
+            this._runEngine(value ? "appearance dark" : "appearance light"));
+        this.menu.addMenuItem(this._darkSwitch);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         // Apply the correct phase right now (theme + night light + brightness).
@@ -128,6 +137,16 @@ LumenduskApplet.prototype = {
                 ? imports.byteArray.toString(data)
                 : ("" + data);
             return /paused\s*=\s*true/.test(text);
+        } catch (e) {
+            return false;
+        }
+    },
+
+    _readDark: function () {
+        // The Cinnamon shell theme name is the reliable "is it dark" signal.
+        try {
+            let s = new Gio.Settings({ schema_id: "org.cinnamon.theme" });
+            return s.get_string("name").indexOf("-Dark") !== -1;
         } catch (e) {
             return false;
         }
