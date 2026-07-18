@@ -1,175 +1,286 @@
-"""Standalone dark/light appearance switch for Cinnamon.
+"""Standalone dark/light appearance switch for Cinnamon (Linux Mint).
 
-This is a **self-contained, correctly-working** dark/light switcher, developed
-independently of the existing ``theme.py`` path so we can get the mechanism right
-before wiring it into config/options. Run it directly:
+Self-contained and developed independently of the rest of the codebase so the
+mechanism can be proven correct before it's wired into config/options. Run it:
 
+    python3 -m lumendusk.apply.appearance status   # show every appearance key
     python3 -m lumendusk.apply.appearance dark
     python3 -m lumendusk.apply.appearance light
-    python3 -m lumendusk.apply.appearance status
+    python3 -m lumendusk.apply.appearance toggle
 
-Why this exists: the older switcher set only two keys (``gtk-theme`` and
-``color-scheme``), which left the Cinnamon shell, panel, menus and window
-borders on their previous (often dark) theme while GTK apps flipped — a visible
-"half switch". A correct dark/light change on Cinnamon has to move every key
-that contributes to the desktop's appearance:
+Why a whole module for "dark mode": on Cinnamon, dark/light is not one setting.
+The desktop shell, the window borders, GTK apps, libadwaita/GTK4 apps, Flatpak
+apps (via the XApp portal), icons and the accent are all separate keys. Changing
+only ``gtk-theme`` + ``color-scheme`` (the old approach) leaves the panel, menus
+and window borders on their previous theme — a visible half-switch.
 
-  * ``org.cinnamon.desktop.interface  gtk-theme``   — GTK application theme
-  * ``org.cinnamon.theme              name``        — Cinnamon shell / panel / menus
-  * ``org.cinnamon.desktop.wm.preferences theme``   — window borders / title bars
-  * ``org.gnome.desktop.interface     color-scheme``— libadwaita / Flatpak hint
-
-The switch keeps the current **accent** (Orange, Aqua, …) and only flips the
-light/dark axis, so a user's colour choice survives the toggle.
+Rather than hard-code theme names, we read Mint's own **authoritative** style
+catalog at ``/usr/share/cinnamon/styles.d/*.styles`` — the exact data Cinnamon's
+Themes/Style settings use. Each entry maps a family + mode (light / mixed / dark)
++ accent to the concrete theme/icon/cursor/colour names. We detect the current
+accent, then apply that accent's *light* or *dark* variant across every key.
 """
 
 from __future__ import annotations
 
+import glob
+import json
 import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-# The Mint-Y family: light names are "Mint-Y[-Accent]", dark names insert
-# "-Dark" ("Mint-Y-Dark[-Accent]"). This is the only family we special-case for
-# now; other themes fall back to a name-mangling guess.
-_LIGHT_FAMILY = "Mint-Y"
-_DARK_FAMILY = "Mint-Y-Dark"
+# ---- the complete set of keys that make up "appearance" ---------------------
+# Cinnamon and its GNOME-compat mirror both matter: some apps read one, some the
+# other. Flatpak/sandboxed apps read the XApp portal keys.
+_KEYS_THEME = [                                   # GTK theme + window borders
+    ("org.cinnamon.desktop.interface", "gtk-theme"),
+    ("org.cinnamon.desktop.wm.preferences", "theme"),
+    ("org.gnome.desktop.interface", "gtk-theme"),
+    ("org.gnome.desktop.wm.preferences", "theme"),
+]
+_KEY_SHELL = ("org.cinnamon.theme", "name")       # Cinnamon shell / panel / menus
+_KEYS_ICON = [
+    ("org.cinnamon.desktop.interface", "icon-theme"),
+    ("org.gnome.desktop.interface", "icon-theme"),
+]
+_KEYS_CURSOR = [
+    ("org.cinnamon.desktop.interface", "cursor-theme"),
+    ("org.gnome.desktop.interface", "cursor-theme"),
+]
+_KEYS_SCHEME = [                                  # libadwaita/GTK4 + Flatpak portal
+    ("org.gnome.desktop.interface", "color-scheme"),
+    ("org.x.apps.portal", "color-scheme"),
+]
+_KEY_ACCENT = ("org.x.apps.portal", "accent-rgb")
 
-# Every key that has to move together for a clean appearance change.
-_GTK = ("org.cinnamon.desktop.interface", "gtk-theme")
-_SHELL = ("org.cinnamon.theme", "name")
-_WM = ("org.cinnamon.desktop.wm.preferences", "theme")
-_SCHEME = ("org.gnome.desktop.interface", "color-scheme")
+_STYLES_GLOBS = [
+    "/usr/share/cinnamon/styles.d/*.styles",
+    os.path.expanduser("~/.local/share/cinnamon/styles.d/*.styles"),
+]
 
 
-def _gsettings_get(schema: str, key: str) -> str | None:
-    if not shutil.which("gsettings"):
+# ---- gsettings helpers ------------------------------------------------------
+_schemas_cache: set[str] | None = None
+
+
+def _schemas() -> set[str]:
+    global _schemas_cache
+    if _schemas_cache is None:
+        try:
+            out = subprocess.run(["gsettings", "list-schemas"],
+                                 check=True, capture_output=True, text=True).stdout
+            _schemas_cache = set(out.split())
+        except (OSError, subprocess.CalledProcessError):
+            _schemas_cache = set()
+    return _schemas_cache
+
+
+def _get(schema: str, key: str) -> str | None:
+    if schema not in _schemas():
         return None
     try:
-        out = subprocess.run(
-            ["gsettings", "get", schema, key],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-        # gsettings prints strings quoted: 'Mint-Y-Orange' -> Mint-Y-Orange
+        out = subprocess.run(["gsettings", "get", schema, key],
+                             check=True, capture_output=True, text=True).stdout.strip()
         return out.strip("'\"")
     except subprocess.CalledProcessError:
         return None
 
 
-def _gsettings_set(schema: str, key: str, value: str) -> bool:
-    if not shutil.which("gsettings"):
-        print("[appearance] gsettings not found; cannot change theme.")
-        return False
+def _set(schema: str, key: str, value: str) -> bool:
+    # Silently skip schemas that don't exist on this machine (e.g. the XApp
+    # portal on non-Mint systems) rather than erroring.
+    if schema not in _schemas():
+        return True
     try:
-        subprocess.run(
-            ["gsettings", "set", schema, key, value],
-            check=True, capture_output=True, text=True,
-        )
+        subprocess.run(["gsettings", "set", schema, key, value],
+                       check=True, capture_output=True, text=True)
         return True
     except subprocess.CalledProcessError as exc:
         print(f"[appearance] set {schema} {key} '{value}' failed: {exc.stderr.strip()}")
         return False
 
 
-def _installed_themes() -> set[str]:
-    """Theme directory names available to the user (~/.themes + system)."""
-    dirs = [
-        os.path.expanduser("~/.themes"),
-        os.path.join(os.path.expanduser("~/.local/share/themes")),
-        "/usr/share/themes",
-    ]
+def _installed_icon_themes() -> set[str]:
     names: set[str] = set()
-    for d in dirs:
+    for d in ("~/.icons", "~/.local/share/icons", "/usr/share/icons"):
         try:
-            names.update(os.listdir(d))
+            names.update(os.listdir(os.path.expanduser(d)))
         except OSError:
             pass
     return names
 
 
-def _detect_accent() -> str:
-    """Work out the current accent (e.g. "Orange") from the live GTK theme.
-
-    Returns "" for the plain grey Mint-Y / Mint-Y-Dark.
-    """
-    current = _gsettings_get(*_GTK) or ""
-    name = current
-    if name.startswith(_DARK_FAMILY):
-        name = name[len(_DARK_FAMILY):]
-    elif name.startswith(_LIGHT_FAMILY):
-        name = name[len(_LIGHT_FAMILY):]
-    else:
-        return ""  # unknown family; no accent we can preserve
-    return name.lstrip("-")  # "-Orange" -> "Orange", "" -> ""
-
-
+# ---- Mint style catalog -----------------------------------------------------
 @dataclass
-class ThemePair:
-    light: str
-    dark: str
-
-    def name(self, dark: bool) -> str:
-        return self.dark if dark else self.light
-
-
-def theme_pair(accent: str = "") -> ThemePair:
-    """Light/dark Mint-Y theme names for a given accent."""
-    suffix = f"-{accent}" if accent else ""
-    return ThemePair(light=f"{_LIGHT_FAMILY}{suffix}", dark=f"{_DARK_FAMILY}{suffix}")
+class Variant:
+    """One concrete look: a family + mode + accent from the styles catalog."""
+    family: str
+    mode: str            # "light" | "mixed" | "dark"
+    accent: str          # e.g. "orange", "yaru"
+    themes: str          # GTK + window-border theme
+    cinnamon: str        # shell theme (== themes unless overridden, i.e. "mixed")
+    icons: str
+    cursor: str
+    color: str           # accent hex, "" if none
 
 
-def set_appearance(dark: bool, accent: str | None = None) -> bool:
-    """Flip the whole desktop to dark or light, preserving the accent.
+def _load_catalog() -> list[Variant]:
+    installed_icons = _installed_icon_themes()
 
-    Returns True if every key was set. Falls back the accent to plain Mint-Y if
-    the accented dark/light theme is not actually installed.
+    def resolve_icons(entry: dict) -> str:
+        if entry.get("icons"):
+            return entry["icons"]
+        # No explicit icon theme: use the GTK theme's name if such an icon theme
+        # exists, else its non-dark counterpart.
+        themes = entry["themes"]
+        if themes in installed_icons:
+            return themes
+        return themes.replace("-Dark", "")
+
+    variants: list[Variant] = []
+    seen_files: set[str] = set()
+    for pattern in _STYLES_GLOBS:
+        for path in sorted(glob.glob(pattern)):
+            base = os.path.basename(path)
+            if base in seen_files:        # user file shadows system file of same name
+                continue
+            seen_files.add(base)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            for family in data.get("styles", []):
+                fam_name = family.get("name", "")
+                for mode in ("light", "mixed", "dark"):
+                    for entry in family.get(mode, []):
+                        variants.append(Variant(
+                            family=fam_name,
+                            mode=mode,
+                            accent=entry.get("name", ""),
+                            themes=entry["themes"],
+                            cinnamon=entry.get("cinnamon", entry["themes"]),
+                            icons=resolve_icons(entry),
+                            cursor=entry.get("cursor", ""),
+                            color=entry.get("color", ""),
+                        ))
+    return variants
+
+
+def _current() -> dict[str, str | None]:
+    return {
+        "themes": _get(*_KEYS_THEME[0]),        # cinnamon gtk-theme
+        "shell": _get(*_KEY_SHELL),
+        "icons": _get(*_KEYS_ICON[0]),
+    }
+
+
+def detect_variant(catalog: list[Variant]) -> Variant | None:
+    """Best-match the live desktop to a catalog entry, to learn family+accent.
+
+    The current state may be inconsistent (that's the bug we fix), so we score a
+    match across the theme, shell and icon keys and take the strongest.
     """
-    if accent is None:
-        accent = _detect_accent()
+    cur = _current()
+    best: Variant | None = None
+    best_score = 0
+    for v in catalog:
+        score = 0
+        if v.themes == cur["themes"]:
+            score += 2
+        if v.cinnamon == cur["shell"]:
+            score += 1
+        if v.icons == cur["icons"]:
+            score += 2
+        if score > best_score:
+            best, best_score = v, score
+    return best
 
-    pair = theme_pair(accent)
-    installed = _installed_themes()
-    # If the accented pair isn't installed, drop to the plain grey Mint-Y pair.
-    if pair.light not in installed or pair.dark not in installed:
-        if accent:
-            print(f"[appearance] '{pair.name(dark)}' not installed; "
-                  f"falling back to plain {_LIGHT_FAMILY}.")
-        pair = theme_pair("")
 
-    theme = pair.name(dark)
-    scheme = "prefer-dark" if dark else "prefer-light"
+def variant_for(catalog: list[Variant], family: str, accent: str,
+                mode: str) -> Variant | None:
+    for v in catalog:
+        if v.family == family and v.accent == accent and v.mode == mode:
+            return v
+    return None
 
+
+# ---- apply ------------------------------------------------------------------
+def apply_variant(v: Variant) -> bool:
+    scheme = "prefer-dark" if v.mode == "dark" else "prefer-light"
     ok = True
-    ok &= _gsettings_set(*_GTK, theme)      # GTK apps
-    ok &= _gsettings_set(*_SHELL, theme)    # Cinnamon shell / panel / menus
-    ok &= _gsettings_set(*_WM, theme)       # window borders
-    ok &= _gsettings_set(*_SCHEME, scheme)  # libadwaita / Flatpak
-
-    print(f"[appearance] → {'dark' if dark else 'light'}: {theme} ({scheme})")
+    for schema, key in _KEYS_THEME:
+        ok &= _set(schema, key, v.themes)
+    ok &= _set(*_KEY_SHELL, v.cinnamon)
+    for schema, key in _KEYS_ICON:
+        ok &= _set(schema, key, v.icons)
+    if v.cursor:
+        for schema, key in _KEYS_CURSOR:
+            ok &= _set(schema, key, v.cursor)
+    for schema, key in _KEYS_SCHEME:
+        ok &= _set(schema, key, scheme)
+    if v.color:
+        ok &= _set(*_KEY_ACCENT, v.color)
+    print(f"[appearance] → {v.mode} [{v.family}/{v.accent}]: "
+          f"themes={v.themes}, shell={v.cinnamon}, icons={v.icons}, scheme={scheme}")
     return ok
 
 
+def set_mode(mode: str) -> bool:
+    """Switch the whole desktop to 'light' or 'dark', keeping the accent."""
+    catalog = _load_catalog()
+    if not catalog:
+        print("[appearance] no Mint style catalog found; is this Linux Mint?")
+        return False
+    cur = detect_variant(catalog)
+    if cur is None:
+        print("[appearance] could not detect the current style.")
+        return False
+    target = variant_for(catalog, cur.family, cur.accent, mode)
+    if target is None:
+        # e.g. Mint-X has no dark variant — fall back to the Mint-Y accent.
+        target = variant_for(catalog, "Mint-Y", cur.accent, mode) \
+            or variant_for(catalog, "Mint-Y", "yaru", mode)
+    if target is None:
+        print(f"[appearance] no '{mode}' variant available for "
+              f"{cur.family}/{cur.accent}.")
+        return False
+    return apply_variant(target)
+
+
+def current_mode() -> str:
+    """Rough current mode from the shell theme (the panel is the giveaway)."""
+    shell = _get(*_KEY_SHELL) or ""
+    return "dark" if "-Dark" in shell else "light"
+
+
 def status() -> None:
-    """Print the four appearance keys so mismatches are obvious."""
-    print(f"  gtk-theme     : {_gsettings_get(*_GTK)}")
-    print(f"  cinnamon shell: {_gsettings_get(*_SHELL)}")
-    print(f"  wm border     : {_gsettings_get(*_WM)}")
-    print(f"  color-scheme  : {_gsettings_get(*_SCHEME)}")
-    print(f"  detected accent: {_detect_accent()!r}")
+    catalog = _load_catalog()
+    cur = detect_variant(catalog) if catalog else None
+    print("Appearance keys:")
+    for schema, key in (_KEYS_THEME[0], _KEY_SHELL, _KEYS_THEME[1],
+                        _KEYS_ICON[0], _KEYS_CURSOR[0], _KEYS_SCHEME[0],
+                        _KEYS_SCHEME[1], _KEY_ACCENT):
+        print(f"  {schema.split('.')[-1]:<16} {key:<13} = {_get(schema, key)}")
+    if cur:
+        print(f"Detected style : {cur.family}/{cur.accent} "
+              f"(looks {current_mode()})")
 
 
 def _main(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
-        print("usage: python3 -m lumendusk.apply.appearance {dark|light|status}")
+        print("usage: python3 -m lumendusk.apply.appearance {dark|light|toggle|status}")
         return 0 if argv else 2
     cmd = argv[0]
     if cmd == "status":
         status()
         return 0
+    if cmd == "toggle":
+        cmd = "light" if current_mode() == "dark" else "dark"
     if cmd in ("dark", "light"):
-        return 0 if set_appearance(cmd == "dark") else 1
+        return 0 if set_mode(cmd) else 1
     print(f"[appearance] unknown command: {cmd}")
     return 2
 
