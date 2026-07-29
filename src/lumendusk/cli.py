@@ -10,19 +10,29 @@
     lumendusk mode day             switch to full day mode now (manual override)
     lumendusk mode night           switch to full night mode now (manual override)
     lumendusk pause / resume       freeze automation (night light off) / resume
-    lumendusk location 51.5 -0.13  set your location and switch to sun mode
+    lumendusk location             show the current + detected location
+    lumendusk location --detect    set it from the system timezone, use sun mode
+    lumendusk location 51.5 -0.13  set it explicitly and switch to sun mode
+    lumendusk config show          print every setting as key=value
+    lumendusk config set KEY VAL   change one setting
 
 Most brightness commands accept ``--monitor <id>`` (default: all).
+
+``config show``/``config set`` are the applet's settings panel talking to the
+engine: the panel collects values and writes them through to config.toml here,
+so the TOML file stays the one place settings actually live.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 
 from . import __version__
 from . import brightness as brightness_mod
 from . import config as config_mod
+from . import geo
 from . import log
 from .daemon import run_daemon
 
@@ -61,9 +71,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     loc = sub.add_parser(
         "location",
-        help="Set your latitude/longitude and switch to sun mode.")
-    loc.add_argument("latitude", type=float, help="Decimal latitude, e.g. 51.5074")
-    loc.add_argument("longitude", type=float, help="Decimal longitude, e.g. -0.1278")
+        help="Show, detect, or set your latitude/longitude (and use sun mode).")
+    loc.add_argument("latitude", nargs="?", type=float,
+                     help="Decimal latitude, e.g. 51.5074")
+    loc.add_argument("longitude", nargs="?", type=float,
+                     help="Decimal longitude, e.g. -0.1278")
+    loc.add_argument("--detect", action="store_true",
+                     help="Take an approximate location from the system timezone.")
+
+    cfgp = sub.add_parser("config", help="Show or change settings.")
+    cfg_sub = cfgp.add_subparsers(dest="config_action")
+    cfg_sub.add_parser("show", help="Print every setting as key=value.")
+    cfg_sub.add_parser("path", help="Print the path to config.toml.")
+    cfg_set = cfg_sub.add_parser("set", help="Change one setting.")
+    cfg_set.add_argument("key", help="Setting name (see 'config show').")
+    cfg_set.add_argument("value", help="New value.")
     return parser
 
 
@@ -101,6 +123,135 @@ def _set_location(latitude: float, longitude: float) -> int:
         print("note: 0, 0 is treated as 'not set' — sun mode will use the "
               "fixed times until a real location is given.", file=sys.stderr)
     return 0
+
+
+def _detect_location() -> int:
+    """Set the location from the system timezone."""
+    found = geo.detect_location()
+    if found is None:
+        print("could not work out a location from the system timezone. Set one "
+              "by hand: lumendusk location <latitude> <longitude>", file=sys.stderr)
+        return 1
+    print(f"detected {found.timezone}.")
+    return _set_location(found.latitude, found.longitude)
+
+
+def _show_location() -> int:
+    """Report the configured location, and what we'd detect for comparison."""
+    cfg = config_mod.load()
+    if cfg.location_is_set():
+        print(f"location: {cfg.latitude}, {cfg.longitude}  (mode={cfg.mode})")
+    else:
+        print(f"location: not set  (mode={cfg.mode})")
+
+    found = geo.detect_location()
+    if found is None:
+        print("detected: nothing — the system timezone gave us no coordinates.")
+    else:
+        print(f"detected: {found.latitude}, {found.longitude}  "
+              f"(from {found.timezone})")
+        print("Apply it with: lumendusk location --detect")
+    return 0
+
+
+def _location_command(args: argparse.Namespace) -> int:
+    if args.detect:
+        return _detect_location()
+    if args.latitude is None and args.longitude is None:
+        return _show_location()
+    if args.latitude is None or args.longitude is None:
+        print("give both a latitude and a longitude, or use --detect.",
+              file=sys.stderr)
+        return 2
+    return _set_location(args.latitude, args.longitude)
+
+
+# Settings that need more than a type check before we write them.
+def _validate(key: str, value: object) -> str | None:
+    """Return an error message for a bad value, or None if it's fine."""
+    if key == "mode" and value not in ("sun", "fixed"):
+        return "mode must be 'sun' or 'fixed'."
+    if key in ("dark_start", "light_start"):
+        # The schedule falls back on a bad time rather than failing, so check
+        # the shape here — silently storing "7pm" is worse than refusing it.
+        parts = str(value).strip().split(":")
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            return f"{key} must look like \"18:00\"."
+        if not (0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59):
+            return f"{key} must be a real 24-hour time, e.g. \"18:00\"."
+    if key == "latitude" and not -90 <= float(value) <= 90:
+        return "latitude must be between -90 and 90."
+    if key == "longitude" and not -180 <= float(value) <= 180:
+        return "longitude must be between -180 and 180."
+    if key in ("brightness_day", "brightness_night") and not 0 <= int(value) <= 100:
+        return f"{key} must be a percentage between 0 and 100."
+    if key == "nightlight_temperature" and not 1000 <= int(value) <= 10000:
+        return "nightlight_temperature must be between 1000 and 10000 kelvin."
+    if key == "brightness_fade_minutes" and int(value) < 0:
+        return "brightness_fade_minutes cannot be negative."
+    return None
+
+
+def _coerce(key: str, raw: str, field_type: type) -> object:
+    """Turn a command-line string into the type the config field expects."""
+    if field_type is bool:
+        lowered = raw.strip().lower()
+        if lowered in ("true", "yes", "on", "1"):
+            return True
+        if lowered in ("false", "no", "off", "0"):
+            return False
+        raise ValueError(f"{key} must be true or false.")
+    if field_type is int:
+        return int(float(raw))     # tolerate "80.0" from a JS slider
+    if field_type is float:
+        return float(raw)
+    return raw
+
+
+def _config_command(args: argparse.Namespace) -> int:
+    action = getattr(args, "config_action", None)
+    if action == "path":
+        print(config_mod.config_path())
+        return 0
+
+    fields = {f.name: f.type for f in dataclasses.fields(config_mod.Config)}
+
+    if action == "show" or action is None:
+        cfg = config_mod.load()
+        # Stable key=value lines: easy to parse from the applet's JS, and
+        # readable enough to be useful on its own.
+        for name in fields:
+            value = getattr(cfg, name)
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            print(f"{name}={value}")
+        return 0
+
+    if action == "set":
+        if args.key not in fields:
+            print(f"unknown setting '{args.key}'. See 'lumendusk config show'.",
+                  file=sys.stderr)
+            return 2
+        cfg = config_mod.load()
+        # The dataclass is annotated with real types, but `from __future__ import
+        # annotations` leaves them as strings — map by the default's type instead.
+        field_type = type(getattr(config_mod.Config(), args.key))
+        try:
+            value = _coerce(args.key, args.value, field_type)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        problem = _validate(args.key, value)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
+        setattr(cfg, args.key, value)
+        config_mod.save(cfg)
+        print(f"{args.key}={args.value}")
+        return 0
+
+    print("usage: lumendusk config show | path | set KEY VALUE", file=sys.stderr)
+    return 2
 
 
 def _appearance_command(which: str) -> int:
@@ -191,7 +342,9 @@ def main(argv: list[str] | None = None) -> int:
             print(exc, file=sys.stderr)
             return 1
     if args.command == "location":
-        return _set_location(args.latitude, args.longitude)
+        return _location_command(args)
+    if args.command == "config":
+        return _config_command(args)
     if args.command == "pause":
         return _set_paused(True)
     if args.command == "resume":

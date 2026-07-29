@@ -1,0 +1,166 @@
+{
+    "layout": {
+        "type": "layout",
+        "pages": ["schedule", "screen"],
+
+        "schedule": {
+            "type": "page",
+            "title": "Schedule",
+            "sections": ["section_mode", "section_location", "section_fixed"]
+        },
+        "section_mode": {
+            "type": "section",
+            "title": "Day and night",
+            "keys": ["enabled", "mode"]
+        },
+        "section_location": {
+            "type": "section",
+            "title": "Your location",
+            "keys": ["location_help", "latitude", "longitude", "detect_location"]
+        },
+        "section_fixed": {
+            "type": "section",
+            "title": "Fixed times",
+            "keys": ["fixed_help", "dark_start", "light_start"]
+        },
+
+        "screen": {
+            "type": "page",
+            "title": "Screen",
+            "sections": ["section_nightlight", "section_brightness"]
+        },
+        "section_nightlight": {
+            "type": "section",
+            "title": "Night light",
+            "keys": ["nightlight_enabled", "nightlight_temperature"]
+        },
+        "section_brightness": {
+            "type": "section",
+            "title": "Brightness",
+            "keys": ["brightness_help", "brightness_enabled",
+                     "brightness_day", "brightness_night"]
+        }
+    },
+
+    "enabled": {
+        "type": "switch",
+        "default": true,
+        "description": "Adjust my desktop automatically",
+        "tooltip": "Turn this off to leave the desktop alone entirely. The applet's manual controls keep working."
+    },
+
+    "mode": {
+        "type": "combobox",
+        "default": "fixed",
+        "description": "Decide day and night by",
+        "options": {
+            "Fixed times": "fixed",
+            "Sunrise and sunset": "sun"
+        },
+        "tooltip": "Sunrise and sunset are worked out offline from the location below, and shift through the year."
+    },
+
+    "location_help": {
+        "type": "label",
+        "description": "Only used for sunrise and sunset. \"Detect\" reads your system timezone — accurate to the nearest major city, which is within a minute or two of the real sunset. Correct it by hand if you want it exact."
+    },
+
+    "latitude": {
+        "type": "spinbutton",
+        "default": 0.0,
+        "min": -90.0,
+        "max": 90.0,
+        "step": 0.0001,
+        "units": "°N",
+        "description": "Latitude",
+        "dependency": "mode=sun"
+    },
+
+    "longitude": {
+        "type": "spinbutton",
+        "default": 0.0,
+        "min": -180.0,
+        "max": 180.0,
+        "step": 0.0001,
+        "units": "°E",
+        "description": "Longitude",
+        "dependency": "mode=sun"
+    },
+
+    "detect_location": {
+        "type": "button",
+        "description": "Detect from my timezone",
+        "callback": "onDetectLocation",
+        "dependency": "mode=sun"
+    },
+
+    "fixed_help": {
+        "type": "label",
+        "description": "24-hour times, e.g. 18:00. Only used when the mode above is \"Fixed times\"."
+    },
+
+    "dark_start": {
+        "type": "entry",
+        "default": "19:00",
+        "description": "Go dark at",
+        "dependency": "mode=fixed"
+    },
+
+    "light_start": {
+        "type": "entry",
+        "default": "07:00",
+        "description": "Go light at",
+        "dependency": "mode=fixed"
+    },
+
+    "nightlight_enabled": {
+        "type": "switch",
+        "default": true,
+        "description": "Warm the screen at night"
+    },
+
+    "nightlight_temperature": {
+        "type": "scale",
+        "default": 4000,
+        "min": 1000,
+        "max": 6500,
+        "step": 100,
+        "units": "K",
+        "description": "Night colour temperature",
+        "tooltip": "Lower is warmer and more orange. 6500 K is normal daylight.",
+        "dependency": "nightlight_enabled"
+    },
+
+    "brightness_help": {
+        "type": "label",
+        "description": "Automatic brightness is not wired into the day/night engine yet — these presets are what the applet's Day and Night buttons apply."
+    },
+
+    "brightness_enabled": {
+        "type": "switch",
+        "default": false,
+        "description": "Change brightness with the time of day"
+    },
+
+    "brightness_day": {
+        "type": "scale",
+        "default": 80,
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "units": "%",
+        "description": "Daytime brightness",
+        "dependency": "brightness_enabled"
+    },
+
+    "brightness_night": {
+        "type": "scale",
+        "default": 35,
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "units": "%",
+        "description": "Night-time brightness",
+        "dependency": "brightness_enabled"
+    }
+}

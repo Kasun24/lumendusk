@@ -3,16 +3,18 @@
  *
  * This is a thin JS shell for the panel: an icon + dropdown menu. The actual
  * work (deciding day/night, switching theme, night light, brightness) is done
- * by the Python engine, which this applet calls via `python3 -m lumendusk ...`.
+ * by the Python engine, which this applet calls via its CLI.
  *
- * Phase-1 scaffold: menu wired to the engine's CLI. Persistent settings
- * (location, times, theme names) live in ~/.config/lumendusk/config.toml; the
- * "Open config file" item opens it for now, and a proper settings panel comes
- * with Brightness Step B2.
+ * Settings (right-click → Configure) are defined in settings-schema.json.
+ * Cinnamon stores those in its own per-instance JSON, but the engine's source
+ * of truth is ~/.config/lumendusk/config.toml — so the panel is kept as a view
+ * onto that file: we seed it from `lumendusk config show` on startup, and write
+ * every change back with `lumendusk config set`. Nothing here parses TOML.
  */
 
 const Applet = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
+const Settings = imports.ui.settings;
 const Util = imports.misc.util;
 const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
@@ -22,14 +24,22 @@ const Mainloop = imports.mainloop;
 // the system Python. Absolute path keeps it working regardless of the panel's PATH.
 const ENGINE = GLib.get_home_dir() + "/.local/share/lumendusk/venv/bin/lumendusk";
 
-function LumenduskApplet(orientation, panelHeight, instanceId) {
-    this._init(orientation, panelHeight, instanceId);
+// Settings we mirror into config.toml. Names match the engine's config keys
+// exactly, which is what lets the sync below stay generic.
+const SYNCED_KEYS = [
+    "enabled", "mode", "latitude", "longitude", "dark_start", "light_start",
+    "nightlight_enabled", "nightlight_temperature",
+    "brightness_enabled", "brightness_day", "brightness_night",
+];
+
+function LumenduskApplet(metadata, orientation, panelHeight, instanceId) {
+    this._init(metadata, orientation, panelHeight, instanceId);
 }
 
 LumenduskApplet.prototype = {
     __proto__: Applet.IconApplet.prototype,
 
-    _init: function (orientation, panelHeight, instanceId) {
+    _init: function (metadata, orientation, panelHeight, instanceId) {
         Applet.IconApplet.prototype._init.call(this, orientation, panelHeight, instanceId);
 
         this.set_applet_icon_symbolic_name("weather-clear-night");
@@ -54,6 +64,141 @@ LumenduskApplet.prototype = {
         // the engine would re-apply it (and fight the user mid-drag).
         this._syncingSlider = false;
         this._buildMenu();
+        this._initSettings(metadata, instanceId);
+    },
+
+    // ---- settings panel <-> config.toml -------------------------------------
+
+    _initSettings: function (metadata, instanceId) {
+        // Guards the write-back while we're loading values *from* the engine,
+        // so seeding the panel doesn't immediately write them all back out.
+        this._loadingSettings = true;
+        // What we believe the engine already has, so a settings-changed signal
+        // only writes the keys that actually moved.
+        this._pushed = {};
+
+        let uuid = (metadata && metadata.uuid) || "lumendusk@kasun";
+        try {
+            this.settings = new Settings.AppletSettings(this, uuid, instanceId);
+        } catch (e) {
+            global.logError("Lumendusk: could not open applet settings: " + e);
+            this._loadingSettings = false;
+            return;
+        }
+
+        for (let i = 0; i < SYNCED_KEYS.length; i++) {
+            let key = SYNCED_KEYS[i];
+            // Bound to this.cfg_<key>. The callback fires per-key on older
+            // Cinnamon versions; "settings-changed" covers the newer ones. Both
+            // land in the same place, and _pushSettings only writes real diffs,
+            // so being called twice is harmless.
+            this.settings.bind(key, "cfg_" + key, () => this._onSettingsChanged());
+        }
+        try {
+            this.settings.connect("settings-changed",
+                                  () => this._onSettingsChanged());
+        } catch (e) {
+            // Older Cinnamon without the signal — the per-key binds above carry it.
+        }
+
+        this._pullSettings();
+    },
+
+    _onSettingsChanged: function () {
+        if (this._loadingSettings) return;
+        this._pushSettings();
+    },
+
+    _pullSettings: function () {
+        // Seed the panel from config.toml, which is what the engine actually
+        // reads. Without this the panel would show schema defaults and the
+        // first edit would quietly overwrite the user's real settings.
+        this._runEngineAsync(["config", "show"], (stdout) => {
+            if (stdout === null) {
+                this._loadingSettings = false;
+                return;
+            }
+            this._loadingSettings = true;
+            try {
+                let values = this._parseKeyValues(stdout);
+                for (let key in values) {
+                    if (SYNCED_KEYS.indexOf(key) === -1) continue;
+                    let value = values[key];
+                    this._pushed[key] = value;
+                    try {
+                        this.settings.setValue(key, value);
+                    } catch (e) {
+                        global.logError("Lumendusk: could not set '" + key + "': " + e);
+                    }
+                }
+            } finally {
+                this._loadingSettings = false;
+            }
+        });
+    },
+
+    _pushSettings: function () {
+        // Write back only what changed — one `config set` per edited key. The
+        // engine validates; a rejected value is logged and the panel is
+        // resynced so it can't keep showing something that was never stored.
+        if (!this.settings) return;
+        let rejected = false;
+        for (let i = 0; i < SYNCED_KEYS.length; i++) {
+            let key = SYNCED_KEYS[i];
+            let value = this["cfg_" + key];
+            if (value === undefined) continue;
+            if (this._pushed[key] === value) continue;
+            this._pushed[key] = value;
+            let text = (typeof value === "boolean")
+                ? (value ? "true" : "false") : String(value);
+            this._runEngineAsync(["config", "set", key, text], (out, err) => {
+                if (out !== null) return;
+                global.logError("Lumendusk: rejected " + key + "=" + text +
+                                (err ? " (" + err.trim() + ")" : ""));
+                if (!rejected) {
+                    rejected = true;
+                    this._pullSettings();
+                }
+            });
+        }
+    },
+
+    onDetectLocation: function () {
+        // settings-schema.json button callback.
+        this._runEngineAsync(["location", "--detect"], (stdout, stderr) => {
+            if (stdout === null) {
+                global.logError("Lumendusk: location detection failed" +
+                                (stderr ? ": " + stderr.trim() : ""));
+                return;
+            }
+            // The engine wrote a location and switched to sun mode; pull it back
+            // so the latitude/longitude fields show what was actually stored.
+            this._pullSettings();
+        });
+    },
+
+    _parseKeyValues: function (text) {
+        // "key=value" per line, from `lumendusk config show`. Values are typed
+        // to match the schema: Cinnamon stores what it's given, and handing a
+        // spinbutton a string would break it.
+        let out = {};
+        let lines = (text || "").split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            let split = lines[i].indexOf("=");
+            if (split <= 0) continue;
+            let key = lines[i].substring(0, split).trim();
+            let raw = lines[i].substring(split + 1).trim();
+            if (raw === "true" || raw === "false") {
+                out[key] = (raw === "true");
+            } else if (/^-?\d+$/.test(raw)) {
+                out[key] = parseInt(raw, 10);
+            } else if (/^-?\d*\.\d+$/.test(raw)) {
+                out[key] = parseFloat(raw);
+            } else {
+                out[key] = raw;
+            }
+        }
+        return out;
     },
 
     _buildMenu: function () {
@@ -148,28 +293,46 @@ LumenduskApplet.prototype = {
         // guess — otherwise the first touch of the slider jumps them to it.
         // Read asynchronously: ddcutil takes a few hundred ms per monitor and
         // this runs on the compositor's thread.
-        if (!this._brightnessSlider || !this._engineInstalled()) return;
+        if (!this._brightnessSlider) return;
+        this._runEngineAsync(["brightness", "get"], (stdout) => {
+            if (stdout === null) return;
+            let percent = this._firstPercent(stdout);
+            if (percent === null) return;
+            this._syncingSlider = true;
+            try {
+                this._brightnessSlider.setValue(percent / 100);
+            } finally {
+                this._syncingSlider = false;
+            }
+        });
+    },
+
+    _runEngineAsync: function (argv, callback) {
+        // Runs the engine off the compositor thread and hands stdout back.
+        // stdout is null when it couldn't run or exited non-zero; stderr comes
+        // along so callers can report why. Never blocks the panel.
+        if (!this._engineInstalled()) {
+            callback(null, "engine not installed at " + ENGINE);
+            return;
+        }
         try {
             let proc = new Gio.Subprocess({
-                argv: [ENGINE, "brightness", "get"],
-                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+                argv: [ENGINE].concat(argv),
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             });
             proc.init(null);
             proc.communicate_utf8_async(null, null, (source, result) => {
                 try {
-                    let [, stdout] = source.communicate_utf8_finish(result);
-                    let percent = this._firstPercent(stdout);
-                    if (percent === null) return;
-                    this._syncingSlider = true;
-                    this._brightnessSlider.setValue(percent / 100);
-                    this._syncingSlider = false;
+                    let [, stdout, stderr] = source.communicate_utf8_finish(result);
+                    callback(source.get_successful() ? stdout : null, stderr);
                 } catch (e) {
-                    global.logError("Lumendusk: brightness read failed: " + e);
-                    this._syncingSlider = false;
+                    global.logError("Lumendusk: '" + argv.join(" ") + "' failed: " + e);
+                    callback(null, "" + e);
                 }
             });
         } catch (e) {
             global.logError("Lumendusk: could not run the engine: " + e);
+            callback(null, "" + e);
         }
     },
 
@@ -239,9 +402,14 @@ LumenduskApplet.prototype = {
             Mainloop.source_remove(this._brightnessDebounce);
             this._brightnessDebounce = 0;
         }
+        // Drops the file monitor Cinnamon keeps on the settings file.
+        if (this.settings) {
+            this.settings.finalize();
+            this.settings = null;
+        }
     },
 };
 
 function main(metadata, orientation, panelHeight, instanceId) {
-    return new LumenduskApplet(orientation, panelHeight, instanceId);
+    return new LumenduskApplet(metadata, orientation, panelHeight, instanceId);
 }

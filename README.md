@@ -31,10 +31,12 @@ macOS (menu-bar extra).
   xrandr backends (Step B1).
 - A Cinnamon **panel applet** with a brightness slider, day/night presets, and a
   **"Pause automation"** switch (freeze everything, e.g. while watching a movie).
+- A **settings panel** (right-click → Configure) for mode, location, times,
+  night-light warmth and brightness presets — including one-click location
+  detection from your system timezone.
 - A background daemon that **autostarts on login**.
 
-Next: an applet **settings panel** and persistence (Step B2), then brightness on
-day/night transitions (Step B3).
+Next: brightness on day/night transitions (Step B3).
 
 ## How it works
 
@@ -83,18 +85,35 @@ unless you pass `--purge`.
 
 ## Setting it up
 
+**Right-click the panel icon → Configure.** Everything lives there: whether to
+follow the sun or fixed times, your location, night-light warmth, and the
+brightness presets.
+
 Day/night comes from either your **location** (sunrise/sunset, computed
 offline) or **fixed times**. Fixed times (dark 19:00, light 07:00) are the
 default, because there is no way to guess a location offline.
 
+Switching to **Sunrise and sunset** needs coordinates. Rather than making you
+look them up, **Detect from my timezone** reads the location your system
+timezone already implies — `Asia/Colombo` → 6.93, 79.85. That comes from
+`/usr/share/zoneinfo`, so it works with no network and no extra dependency.
+It's accurate to the timezone's main city, which puts sunset within a minute or
+two for most people; the fields stay editable if you want it exact.
+
+The same thing from a terminal:
+
 ```bash
-lumendusk location 51.5074 -0.1278   # your latitude/longitude → switches to sun mode
-lumendusk status                     # mode, current phase, and where the config/log live
+lumendusk location                   # what's set, and what would be detected
+lumendusk location --detect          # take it from the system timezone
+lumendusk location 51.5074 -0.1278   # or set it yourself → switches to sun mode
+lumendusk status                     # mode, current phase, and where config/log live
 ```
 
-Everything else lives in `~/.config/lumendusk/config.toml` — the applet's
-**Open config file** item opens it. Note that Lumendusk rewrites this file when
-you change something from the applet or CLI, so comments you add won't survive.
+Settings are stored in `~/.config/lumendusk/config.toml`; the settings panel is
+a view onto that file and writes changes straight back to it, so the CLI and the
+panel can't disagree. Editing the file by hand works too (the applet's **Open
+config file** item opens it) — just note that Lumendusk rewrites the file when
+anything changes, so comments you add won't survive.
 
 ## Command line (for testing / headless)
 
@@ -102,7 +121,11 @@ you change something from the applet or CLI, so comments you add won't survive.
 lumendusk --once                 # apply the correct day/night state now, then exit
 lumendusk                        # run the background daemon
 lumendusk status                 # mode / phase / paused, plus config + log paths
+lumendusk location               # show the current + auto-detected location
+lumendusk location --detect      # set it from the system timezone
 lumendusk location LAT LON       # set your location and switch to sun mode
+lumendusk config show            # every setting as key=value
+lumendusk config set KEY VALUE   # change one setting (validated)
 lumendusk pause | resume         # freeze automation (e.g. while watching a movie)
 lumendusk brightness list        # show monitors + which backend each uses
 lumendusk brightness get         # current brightness
