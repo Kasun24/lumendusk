@@ -11,11 +11,23 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Kasun Sampath" }]
 keywords = ["theme", "dark-mode", "night-light", "cinnamon", "linux-mint", "daemon"]
-dependencies = []
+# Reading config needs a TOML parser. It's in the stdlib from 3.11 (Mint 22);
+# on 3.9/3.10 (Mint 21 ships 3.10) we need the tiny `tomli` backport.
+dependencies = ['tomli>=1.1.0; python_version < "3.11"']
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment",
+]
 
 [project.optional-dependencies]
 # Sunrise/sunset from location. Enable with: pip install lumendusk[sun]
 sun = ["astral>=3.2"]
+dev = ["pytest>=7.0"]
 
 [project.urls]
 Homepage = "https://github.com/Kasun24/lumendusk"
@@ -27,3 +39,7 @@ lumendusk = "lumendusk.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

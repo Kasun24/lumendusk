@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .backends import (
     Backlight,
+    BacklightError,
     DdcutilBacklight,
     SysfsBacklight,
     XrandrBacklight,
@@ -50,9 +51,13 @@ def _external_monitors() -> list[Backlight]:
     for line in out.splitlines():
         stripped = line.strip()
         if stripped.startswith("Display "):
+            try:
+                number = int(stripped.split()[1])
+            except (IndexError, ValueError):
+                continue  # e.g. "Display not found" — not a display block
             if display is not None:
                 mons.append(DdcutilBacklight(display, model))
-            display = int(stripped.split()[1])
+            display = number
             model = ""
         elif stripped.startswith("Monitor:") and display is not None:
             # "Monitor: <mfg>:<model>:<serial>"
@@ -88,11 +93,15 @@ def list_monitors() -> list[Backlight]:
 
 
 def select(monitors: list[Backlight], selector: str) -> list[Backlight]:
-    """Filter monitors by id, or return all for the "all" selector."""
+    """Filter monitors by id, or return all for the "all" selector.
+
+    Raises :class:`BacklightError` for an unknown id — never ``SystemExit``,
+    which would take the daemon down from library code.
+    """
     if selector == "all":
         return monitors
     chosen = [m for m in monitors if m.id == selector]
     if not chosen:
         known = ", ".join(m.id for m in monitors) or "(none detected)"
-        raise SystemExit(f"[lumendusk] no monitor '{selector}'. Known: {known}")
+        raise BacklightError(f"no monitor '{selector}'. Known: {known}")
     return chosen

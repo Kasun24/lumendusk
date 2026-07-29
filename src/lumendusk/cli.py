@@ -10,6 +10,7 @@
     lumendusk mode day             switch to full day mode now (manual override)
     lumendusk mode night           switch to full night mode now (manual override)
     lumendusk pause / resume       freeze automation (night light off) / resume
+    lumendusk location 51.5 -0.13  set your location and switch to sun mode
 
 Most brightness commands accept ``--monitor <id>`` (default: all).
 """
@@ -17,10 +18,12 @@ Most brightness commands accept ``--monitor <id>`` (default: all).
 from __future__ import annotations
 
 import argparse
+import sys
 
 from . import __version__
 from . import brightness as brightness_mod
 from . import config as config_mod
+from . import log
 from .daemon import run_daemon
 
 
@@ -55,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     a = sub.add_parser("appearance",
                        help="Dark/light desktop switch (system UI + apps).")
     a.add_argument("which", choices=["dark", "light", "toggle", "status"])
+
+    loc = sub.add_parser(
+        "location",
+        help="Set your latitude/longitude and switch to sun mode.")
+    loc.add_argument("latitude", type=float, help="Decimal latitude, e.g. 51.5074")
+    loc.add_argument("longitude", type=float, help="Decimal longitude, e.g. -0.1278")
     return parser
 
 
@@ -69,12 +78,28 @@ def _set_paused(paused: bool) -> int:
         if cfg.nightlight_enabled:
             from .apply import set_nightlight
             set_nightlight(False)
-        print("[lumendusk] paused; night light off, theme/brightness frozen.")
+        log.info("paused; night light off, theme/brightness frozen.")
     else:
         # Resume: snap straight to the correct current phase.
         from .daemon import apply_phase, current_phase
         apply_phase(current_phase(cfg), cfg)
-        print("[lumendusk] resumed; applied current phase.")
+        log.info("resumed; applied current phase.")
+    return 0
+
+
+def _set_location(latitude: float, longitude: float) -> int:
+    """Store a location and switch to sun mode (the point of having one)."""
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        print("latitude must be -90..90 and longitude -180..180.", file=sys.stderr)
+        return 2
+    cfg = config_mod.load()
+    cfg.latitude, cfg.longitude = latitude, longitude
+    cfg.mode = "sun"
+    config_mod.save(cfg)
+    print(f"location set to {latitude}, {longitude}; mode is now 'sun'.")
+    if not cfg.location_is_set():
+        print("note: 0, 0 is treated as 'not set' — sun mode will use the "
+              "fixed times until a real location is given.", file=sys.stderr)
     return 0
 
 
@@ -99,7 +124,7 @@ def _apply_mode(which: str) -> int:
     cfg = config_mod.load()
     phase = Phase.NIGHT if which == "night" else Phase.DAY
     apply_phase(phase, cfg)
-    print(f"[lumendusk] switched to {which} mode (manual).")
+    log.info("switched to %s mode (manual).", which)
     return 0
 
 
@@ -109,6 +134,12 @@ def _status() -> int:
     phase = current_phase(cfg).value
     state = "paused" if cfg.paused else ("enabled" if cfg.enabled else "disabled")
     print(f"mode={cfg.mode} phase={phase} state={state}")
+    if cfg.mode == "sun" and not cfg.location_is_set():
+        print(f"  sun mode has no location set, so the fixed times "
+              f"({cfg.light_start}–{cfg.dark_start}) are in use. Set one with: "
+              f"lumendusk location <lat> <lon>")
+    print(f"  config: {config_mod.config_path()}")
+    print(f"  log:    {log.log_path()}")
     return 0
 
 
@@ -117,7 +148,9 @@ def _brightness_command(args: argparse.Namespace) -> int:
     if action == "list":
         monitors = brightness_mod.list_monitors()
         if not monitors:
-            print("[lumendusk] no controllable monitors detected.")
+            print("no controllable monitors detected. For external monitors, "
+                  "install ddcutil, load the i2c-dev module, and add yourself "
+                  "to the 'i2c' group.", file=sys.stderr)
             return 1
         for mon in monitors:
             try:
@@ -135,7 +168,7 @@ def _brightness_command(args: argparse.Namespace) -> int:
 
     if action == "set":
         if args.value is None:
-            print("[lumendusk] 'brightness set' needs a value, e.g. 'set 60'.")
+            print("'brightness set' needs a value, e.g. 'set 60'.", file=sys.stderr)
             return 2
         for mid, level in brightness_mod.set_brightness(args.value, args.monitor):
             print(f"  {mid} → {level}%")
@@ -152,7 +185,13 @@ def _brightness_command(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "brightness":
-        return _brightness_command(args)
+        try:
+            return _brightness_command(args)
+        except brightness_mod.BacklightError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    if args.command == "location":
+        return _set_location(args.latitude, args.longitude)
     if args.command == "pause":
         return _set_paused(True)
     if args.command == "resume":

@@ -49,20 +49,61 @@ day/night transitions (Step B3).
 
 ## Install (Linux Mint / Cinnamon)
 
+Needs **Python 3.9+** and `python3-venv` (`sudo apt install python3-venv`) —
+Mint 21 and 22 both ship a new enough Python.
+
 ```bash
-git clone git@github.com:Kasun24/lumendusk.git
+git clone https://github.com/Kasun24/lumendusk.git
 cd lumendusk
 ./install.sh
 ```
 
-Then right-click your panel → **Add applets** → **Lumendusk** → **+**. Click the
-panel icon → **Open config file** to set your location or fixed times.
+`install.sh` builds a self-contained venv under
+`~/.local/share/lumendusk/venv` (nothing is installed into your system Python),
+copies the applet into place, and starts the background daemon.
+
+Then right-click your panel → **Add applets** → **Lumendusk** → **+**.
+
+Optional system tools, each unlocking one feature:
+
+| Tool | What it adds |
+|------|--------------|
+| `ddcutil` | Brightness on external monitors over DDC/CI (needs the `i2c-dev` module and your user in the `i2c` group) |
+| `brightnessctl` | Laptop-panel brightness without root |
+| `gammastep` or `xsct` | Night light where Cinnamon's own keys are missing |
+
+### Uninstall
+
+```bash
+./uninstall.sh
+```
+
+Removes the venv, the applet, and the autostart entry. Your config is kept
+unless you pass `--purge`.
+
+## Setting it up
+
+Day/night comes from either your **location** (sunrise/sunset, computed
+offline) or **fixed times**. Fixed times (dark 19:00, light 07:00) are the
+default, because there is no way to guess a location offline.
+
+```bash
+lumendusk location 51.5074 -0.1278   # your latitude/longitude → switches to sun mode
+lumendusk status                     # mode, current phase, and where the config/log live
+```
+
+Everything else lives in `~/.config/lumendusk/config.toml` — the applet's
+**Open config file** item opens it. Note that Lumendusk rewrites this file when
+you change something from the applet or CLI, so comments you add won't survive.
 
 ## Command line (for testing / headless)
 
 ```bash
 lumendusk --once                 # apply the correct day/night state now, then exit
 lumendusk                        # run the background daemon
+lumendusk status                 # mode / phase / paused, plus config + log paths
+lumendusk location LAT LON       # set your location and switch to sun mode
+lumendusk pause | resume         # freeze automation (e.g. while watching a movie)
 lumendusk brightness list        # show monitors + which backend each uses
 lumendusk brightness get         # current brightness
 lumendusk brightness set 60      # set brightness to 60%
@@ -73,7 +114,24 @@ lumendusk appearance toggle      # flip whole-desktop dark <-> light (or dark|li
 PYTHONPATH=src python3 -m lumendusk --once
 ```
 
-Config lives at `~/.config/lumendusk/config.toml`.
+## Troubleshooting
+
+The daemon runs detached, so it writes to a log file rather than a terminal:
+
+```bash
+tail -f ~/.local/state/lumendusk/lumendusk.log
+```
+
+That's the first place to look if a theme, night light, or brightness change
+didn't happen — a missing backend or an unreadable config is reported there.
+Lumendusk keeps running on the last good settings rather than exiting.
+
+## Development
+
+```bash
+pip install -e '.[sun,dev]'
+pytest
+```
 
 ## Roadmap
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 
+from .. import log
+
 _SCHEMA = "org.cinnamon.settings-daemon.plugins.color"
 
 
@@ -29,17 +31,20 @@ def _gsettings_set(schema: str, key: str, value: str) -> bool:
 
 def _fallback(on: bool, temperature: int) -> None:
     """Best-effort night light without Cinnamon's own keys."""
-    if shutil.which("gammastep"):
-        # gammastep -O sets a one-shot temperature; -x resets to daylight.
-        if on:
-            subprocess.Popen(["gammastep", "-O", str(temperature)])
-        elif shutil.which("gammastep"):
-            subprocess.Popen(["gammastep", "-x"])
+    try:
+        if shutil.which("gammastep"):
+            # gammastep -O sets a one-shot temperature; -x resets to daylight.
+            args = ["gammastep", "-O", str(temperature)] if on else ["gammastep", "-x"]
+            subprocess.Popen(args)
+            return
+        if shutil.which("xsct"):
+            subprocess.Popen(["xsct", str(temperature) if on else "6500"])
+            return
+    except OSError as exc:
+        log.warning("night-light fallback failed to start: %s", exc)
         return
-    if shutil.which("xsct"):
-        subprocess.Popen(["xsct", str(temperature) if on else "6500"])
-        return
-    print("[lumendusk] no night-light backend available (cinnamon keys, gammastep, xsct).")
+    log.warning("no night-light backend available "
+                "(cinnamon keys, gammastep, xsct).")
 
 
 def set_nightlight(on: bool, temperature: int = 4000) -> None:
@@ -58,5 +63,5 @@ def set_nightlight(on: bool, temperature: int = 4000) -> None:
         ok = _gsettings_set(_SCHEMA, "night-light-enabled", "false")
     if not ok:
         _fallback(on, temperature)
-    print(f"[lumendusk] night light → {'on' if on else 'off'}"
-          + (f" @ {temperature}K" if on else ""))
+    log.info("night light → %s%s", "on" if on else "off",
+             f" @ {temperature}K" if on else "")

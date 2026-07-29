@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor declared in pyproject.toml; 3.10 is what Mint 21
+        # ships and 3.12 is what Mint 22 ships. 3.10 vs 3.12 also covers both
+        # sides of the tomllib split (stdlib from 3.11, `tomli` before that).
+        python-version: ["3.9", "3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install -e '.[sun,dev]'
+
+      - name: Run tests
+        run: pytest -q
+
+  applet-syntax:
+    # The applet is JavaScript run by Cinnamon's GJS, so the Python tests can't
+    # see it. A syntax check at least stops a typo reaching someone's panel,
+    # where the only symptom is an applet that silently fails to load.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check applet syntax
+        run: |
+          sudo apt-get update && sudo apt-get install -y nodejs
+          node --check applet/lumendusk@kasun/applet.js

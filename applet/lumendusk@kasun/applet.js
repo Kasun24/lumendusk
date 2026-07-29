@@ -39,15 +39,20 @@ LumenduskApplet.prototype = {
         this.menu = new Applet.AppletPopupMenu(this, orientation);
         this.menuManager.addMenu(this.menu);
 
-        // Refresh the pause switch each time the menu opens, in case it was
-        // changed from the CLI or another instance.
+        // Refresh state each time the menu opens, in case it was changed from
+        // the CLI, another instance, or Cinnamon's own settings.
         this.menu.connect("open-state-changed", (menu, open) => {
             if (!open) return;
             if (this._pauseSwitch) this._pauseSwitch.setToggleState(this._readPaused());
             if (this._darkSwitch) this._darkSwitch.setToggleState(this._readDark());
+            this._refreshBrightness();
         });
 
         this._brightnessDebounce = 0;
+        // Guards the slider's value-changed handler while we're setting the
+        // slider ourselves — otherwise syncing the real value straight back to
+        // the engine would re-apply it (and fight the user mid-drag).
+        this._syncingSlider = false;
         this._buildMenu();
     },
 
@@ -57,6 +62,20 @@ LumenduskApplet.prototype = {
         let title = new PopupMenu.PopupMenuItem("Lumendusk", { reactive: false });
         this.menu.addMenuItem(title);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        // Without the engine every menu item below is a no-op, which looks like
+        // a broken applet. Say so instead of failing silently.
+        if (!this._engineInstalled()) {
+            let missing = new PopupMenu.PopupMenuItem(
+                "Engine not found — run install.sh", { reactive: false });
+            this.menu.addMenuItem(missing);
+            let hint = new PopupMenu.PopupMenuItem(
+                "Expected: " + ENGINE, { reactive: false });
+            hint.actor.set_style("font-size: 8pt;");
+            this.menu.addMenuItem(hint);
+            this.set_applet_tooltip("Lumendusk — engine not installed");
+            return;
+        }
 
         // Pause automation (e.g. while watching a movie): turns night light off
         // for true colors and freezes theme + brightness until switched back on.
@@ -111,6 +130,7 @@ LumenduskApplet.prototype = {
     },
 
     _onBrightnessChanged: function (value) {
+        if (this._syncingSlider) return;   // we set it, don't echo it back
         // DDC/CI is slow — debounce so dragging the slider doesn't spam writes.
         let percent = Math.round(value * 100);
         if (this._brightnessDebounce) {
@@ -123,7 +143,52 @@ LumenduskApplet.prototype = {
         });
     },
 
+    _refreshBrightness: function () {
+        // Show what the monitors are actually at, rather than a hardcoded
+        // guess — otherwise the first touch of the slider jumps them to it.
+        // Read asynchronously: ddcutil takes a few hundred ms per monitor and
+        // this runs on the compositor's thread.
+        if (!this._brightnessSlider || !this._engineInstalled()) return;
+        try {
+            let proc = new Gio.Subprocess({
+                argv: [ENGINE, "brightness", "get"],
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+            });
+            proc.init(null);
+            proc.communicate_utf8_async(null, null, (source, result) => {
+                try {
+                    let [, stdout] = source.communicate_utf8_finish(result);
+                    let percent = this._firstPercent(stdout);
+                    if (percent === null) return;
+                    this._syncingSlider = true;
+                    this._brightnessSlider.setValue(percent / 100);
+                    this._syncingSlider = false;
+                } catch (e) {
+                    global.logError("Lumendusk: brightness read failed: " + e);
+                    this._syncingSlider = false;
+                }
+            });
+        } catch (e) {
+            global.logError("Lumendusk: could not run the engine: " + e);
+        }
+    },
+
+    _firstPercent: function (text) {
+        // Engine prints one line per monitor: "  ddc1: 33%" (or "?%" on error).
+        let match = /(\d+)%/.exec(text || "");
+        return match ? parseInt(match[1], 10) : null;
+    },
+
+    _engineInstalled: function () {
+        return GLib.file_test(ENGINE, GLib.FileTest.IS_EXECUTABLE);
+    },
+
     _runEngine: function (args) {
+        if (!this._engineInstalled()) {
+            global.logError("Lumendusk: engine not found at " + ENGINE +
+                            " — run install.sh from the repo.");
+            return;
+        }
         Util.spawnCommandLine(ENGINE + " " + args);
     },
 
@@ -154,9 +219,15 @@ LumenduskApplet.prototype = {
 
     _openConfig: function () {
         let path = GLib.get_user_config_dir() + "/lumendusk/config.toml";
-        // Ensure it exists (the engine creates defaults on first run), then open.
-        Util.spawnCommandLine(ENGINE + " --once");
-        Util.spawnCommandLine("xdg-open " + GLib.shell_quote(path));
+        let open = () => Util.spawnCommandLine("xdg-open " + GLib.shell_quote(path));
+        if (GLib.file_test(path, GLib.FileTest.EXISTS)) {
+            open();
+            return;
+        }
+        // First run: the engine writes the default config. Give it a moment
+        // before handing the path to xdg-open, or we open nothing.
+        this._runEngine("--once");
+        Mainloop.timeout_add(700, () => { open(); return false; });
     },
 
     on_applet_clicked: function () {
