@@ -153,6 +153,80 @@ class TestManualNightlight:
         capsys.readouterr()
 
 
+class TestDaemonHandoff:
+    """The seam between `lumendusk manual` and the daemon's next tick.
+
+    Both sides were tested on their own and both were correct on their own,
+    which is exactly how the bug below survived: it only existed in the gap
+    between them.
+    """
+
+    @pytest.fixture
+    def ticking(self, monkeypatch):
+        """Run the daemon for a fixed number of ticks instead of forever.
+
+        The loop only yields control inside ``time.sleep``, so that is where a
+        test gets to act between ticks — and raising KeyboardInterrupt there is
+        how the daemon is designed to stop.
+        """
+        def run(interval, on_tick):
+            count = {"n": 0}
+
+            def fake_sleep(_seconds):
+                count["n"] += 1
+                if not on_tick(count["n"]):
+                    raise KeyboardInterrupt
+
+            monkeypatch.setattr(daemon_mod.time, "sleep", fake_sleep)
+            return daemon_mod.run_daemon(interval=interval)
+
+        return run
+
+    def test_a_tick_after_switching_to_manual_touches_nothing(self, applied, ticking):
+        """Regression: the daemon repeated the CLI's one-time night light drop.
+
+        `lumendusk manual` turns the night light off as it switches. The daemon
+        then noticed the switch on its own next tick and turned it off *again* —
+        up to a minute later, by which time the user may well have turned it
+        back on from the panel menu. Observed on a real desktop: warmth switched
+        on at 01:18:44 was gone at 01:18:45.
+        """
+        config_mod.save(Config(control="auto", nightlight_enabled=True))
+
+        def on_tick(n):
+            if n == 1:
+                # What the CLI does, then what the user does a moment later.
+                cfg = config_mod.load()
+                cfg.control = "manual"
+                config_mod.save(cfg)
+                applied["theme"].clear()
+                applied["nightlight"].clear()
+                applied["brightness"].clear()
+                return True
+            return False  # stop; the tick under test has already run
+
+        assert ticking(1, on_tick) == 0
+        assert applied["nightlight"] == [], \
+            "the daemon must not touch night light the user now owns"
+        assert applied["theme"] == []
+        assert applied["brightness"] == []
+
+    def test_switching_back_to_auto_still_snaps(self, applied, ticking):
+        """The other half: leaving manual must re-apply, or nothing ever would."""
+        config_mod.save(Config(control="manual", nightlight_enabled=True))
+
+        def on_tick(n):
+            if n == 1:
+                cfg = config_mod.load()
+                cfg.control = "auto"
+                config_mod.save(cfg)
+                return True
+            return False
+
+        assert ticking(1, on_tick) == 0
+        assert len(applied["theme"]) == 1, "should snap to the current phase"
+
+
 class TestStatus:
     def test_reports_control_alongside_mode_and_phase(self, capsys):
         config_mod.save(Config(control="manual"))

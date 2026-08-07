@@ -121,14 +121,16 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
 
             cfg = config_mod.load()  # cheap; lets applet/config edits take effect
 
-            # Manual: leave theme + brightness where the user put them, but turn
-            # night light off (true colors). Toggled once, on entering manual.
+            # Manual: touch nothing at all, the same as startup-in-manual above.
+            #
+            # Dropping the night light on the way in is `lumendusk manual`'s
+            # job, and only its job. Repeating it here looked harmless but this
+            # tick can land up to `interval` seconds after the switch, so it
+            # would undo a night light the user had turned back on in between —
+            # which is precisely the thing manual mode promises not to do.
             if not cfg.is_auto():
                 if not was_manual:
-                    if cfg.nightlight_enabled:
-                        set_nightlight(False)
-                    log.info("switched to manual; night light off, "
-                             "theme/brightness left alone.")
+                    log.info("switched to manual; leaving the desktop alone.")
                 was_manual = True
                 continue
 
