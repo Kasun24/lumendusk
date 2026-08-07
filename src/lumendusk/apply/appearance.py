@@ -26,10 +26,11 @@ from __future__ import annotations
 import glob
 import json
 import os
-import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from .. import log
 
 # ---- the complete set of keys that make up "appearance" ---------------------
 # Cinnamon and its GNOME-compat mirror both matter: some apps read one, some the
@@ -98,7 +99,8 @@ def _set(schema: str, key: str, value: str) -> bool:
                        check=True, capture_output=True, text=True)
         return True
     except subprocess.CalledProcessError as exc:
-        print(f"[appearance] set {schema} {key} '{value}' failed: {exc.stderr.strip()}")
+        log.warning("set %s %s '%s' failed: %s", schema, key, value,
+                    (exc.stderr or "").strip())
         return False
 
 
@@ -223,8 +225,8 @@ def apply_variant(v: Variant) -> bool:
         ok &= _set(schema, key, scheme)
     if v.color:
         ok &= _set(*_KEY_ACCENT, v.color)
-    print(f"[appearance] → {v.mode} [{v.family}/{v.accent}]: "
-          f"themes={v.themes}, shell={v.cinnamon}, icons={v.icons}, scheme={scheme}")
+    log.info("appearance → %s [%s/%s]: themes=%s, shell=%s, icons=%s, scheme=%s",
+             v.mode, v.family, v.accent, v.themes, v.cinnamon, v.icons, scheme)
     return ok
 
 
@@ -236,7 +238,9 @@ def set_mode(mode: str, accent: str | None = None) -> bool:
     """
     catalog = _load_catalog()
     if not catalog:
-        print("[appearance] no Mint style catalog found; is this Linux Mint?")
+        log.error("no Cinnamon style catalog found in %s — Lumendusk's "
+                  "dark/light switch needs Linux Mint / Cinnamon.",
+                  " or ".join(_STYLES_GLOBS))
         return False
     cur = detect_variant(catalog)
     family = cur.family if cur else "Mint-Y"
@@ -247,7 +251,7 @@ def set_mode(mode: str, accent: str | None = None) -> bool:
               or variant_for(catalog, "Mint-Y", use_accent, mode)
               or variant_for(catalog, "Mint-Y", "yaru", mode))
     if target is None:
-        print(f"[appearance] no '{mode}' variant for {family}/{use_accent}.")
+        log.error("no '%s' variant for %s/%s.", mode, family, use_accent)
         return False
     return apply_variant(target)
 
@@ -283,7 +287,7 @@ def _main(argv: list[str]) -> int:
         cmd = "light" if current_mode() == "dark" else "dark"
     if cmd in ("dark", "light"):
         return 0 if set_mode(cmd) else 1
-    print(f"[appearance] unknown command: {cmd}")
+    print(f"unknown command: {cmd}", file=sys.stderr)
     return 2
 
 

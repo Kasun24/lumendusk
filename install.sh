@@ -54,19 +54,27 @@ Done.
 Next steps:
   1. Right-click your panel → "Add applets".
   2. Select "Lumendusk" and click the "+" (add) button.
-  3. Click the new panel icon → "Open config file" to set your location
-     (latitude/longitude) or fixed times.
+  3. Tell it when your day is. It uses fixed times (dark 19:00, light 07:00)
+     until you give it a location, since there's no way to guess one offline:
+       $VENV/bin/lumendusk location <latitude> <longitude>
+     e.g. 51.5074 -0.1278 for London. That switches it to sunrise/sunset.
+     Everything else is in the config file (applet → "Open config file").
 
 The background daemon is now running and will start automatically on login.
 Manage it from Cinnamon's "Startup Applications", or:
   pkill -f "$VENV/bin/lumendusk\$"                 # stop it now
   rm ~/.config/autostart/lumendusk.desktop         # disable autostart
+  ./uninstall.sh                                   # remove it all
 
 The engine lives in its own venv ($VENV) — nothing was installed into your
 system Python. Command line, if you want it:
   $VENV/bin/lumendusk --once      # apply the correct state right now
-  $VENV/bin/lumendusk status      # mode / phase / paused
-  $VENV/bin/lumendusk pause       # freeze automation (movie mode)
+  $VENV/bin/lumendusk status      # control / mode / phase, plus file locations
+  $VENV/bin/lumendusk manual      # leave the desktop to you (movie mode)
+  $VENV/bin/lumendusk auto        # follow the schedule again
+
+The daemon runs detached, so if something doesn't happen, look here:
+  tail -f ~/.local/state/lumendusk/lumendusk.log
 
 Optional system tools for full functionality:
   - ddcutil       (external-monitor brightness over DDC/CI; add yourself to the

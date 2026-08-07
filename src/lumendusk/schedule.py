@@ -5,28 +5,62 @@ Two modes, both pure-Python and offline:
 * ``sun``   — sunrise/sunset for the user's latitude/longitude, via ``astral``.
 * ``fixed`` — user-set clock times (``dark_start`` / ``light_start``).
 
-If ``astral`` is not installed while in sun mode, we log once and fall back to
-fixed times so the daemon still does something sensible.
+Sun mode falls back to fixed times (warning once) when it can't be trusted:
+``astral`` isn't installed, no location has been set, or astral itself fails.
+Fixed times are always available, so there is no configuration a user can land
+in where we don't know what to do.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from .config import Config
+from . import log
+from .config import Config, config_path
 
+# Warn-once flags, so a per-minute daemon loop doesn't spam the log.
 _warned_no_astral = False
+_warned_no_location = False
+_warned_bad_times = False
+_warned_astral_failed = False
+_warned_bad_mode = False
+
+_DEFAULT_DARK = "19:00"
+_DEFAULT_LIGHT = "07:00"
 
 
-def _hhmm_to_minutes(value: str) -> int:
-    hh, mm = value.split(":")
-    return int(hh) * 60 + int(mm)
+def _hhmm_to_minutes(value: str, default: str) -> int:
+    """Parse a 24-hour "HH:MM" string into minutes past midnight.
+
+    Falls back to ``default`` for anything unparseable, so one typo in the
+    config can't take the daemon down.
+    """
+    global _warned_bad_times
+    for candidate, is_fallback in ((value, False), (default, True)):
+        try:
+            hh, mm = str(candidate).strip().split(":")
+            hours, minutes = int(hh), int(mm)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if 0 <= hours <= 23 and 0 <= minutes <= 59:
+            if is_fallback and not _warned_bad_times:
+                log.warning(
+                    "'%s' is not a valid HH:MM time; using %s instead.",
+                    value, default,
+                )
+                _warned_bad_times = True
+            return hours * 60 + minutes
+    return 0  # unreachable while the defaults above stay valid
 
 
 def _fixed_is_night(config: Config, now: datetime) -> bool:
     now_min = now.hour * 60 + now.minute
-    dark = _hhmm_to_minutes(config.dark_start)
-    light = _hhmm_to_minutes(config.light_start)
+    dark = _hhmm_to_minutes(config.dark_start, _DEFAULT_DARK)
+    light = _hhmm_to_minutes(config.light_start, _DEFAULT_LIGHT)
+    if dark == light:
+        # Degenerate config (identical times): treat as always day rather than
+        # flapping every minute.
+        return False
     if dark <= light:
         # Unusual ordering (dark before light on the same day): night is the
         # window between them.
@@ -36,29 +70,68 @@ def _fixed_is_night(config: Config, now: datetime) -> bool:
 
 
 def _sun_is_night(config: Config, now: datetime) -> bool:
-    global _warned_no_astral
+    global _warned_no_astral, _warned_no_location, _warned_astral_failed
+
+    # A latitude/longitude of 0, 0 is the Gulf of Guinea — i.e. nobody's
+    # desktop. Without a real location, sun times would be confidently wrong
+    # (dark all morning several timezones away), so use fixed times instead.
+    if not config.location_is_set():
+        if not _warned_no_location:
+            log.warning(
+                "sun mode needs a location: set [location] latitude/longitude "
+                "in %s. Using fixed times (%s–%s) until then.",
+                config_path(), config.light_start, config.dark_start,
+            )
+            _warned_no_location = True
+        return _fixed_is_night(config, now)
+
     try:
-        from astral import LocationInfo
-        from astral.sun import sun
+        from astral import Observer
+        from astral.sun import elevation
     except ImportError:
         if not _warned_no_astral:
-            print(
-                "[lumendusk] astral not installed; sun mode unavailable, "
-                "falling back to fixed times. Install with: pip install 'lumendusk[sun]'"
+            log.warning(
+                "astral not installed; sun mode unavailable, falling back to "
+                "fixed times. Install with: pip install 'lumendusk[sun]'"
             )
             _warned_no_astral = True
         return _fixed_is_night(config, now)
 
-    # Work in the machine's local timezone so comparisons line up.
-    local = now.astimezone()
-    loc = LocationInfo(latitude=config.latitude, longitude=config.longitude)
-    times = sun(loc.observer, date=local.date(), tzinfo=local.tzinfo)
-    return local < times["sunrise"] or local >= times["sunset"]
+    # Ask "where is the sun right now" rather than "when are today's sunrise and
+    # sunset". Comparing against sunrise/sunset means picking a *date* to compute
+    # them for, and a solar day doesn't line up with a calendar day: across the
+    # Americas and the Pacific, sunset falls on the next UTC date, and astral
+    # pins both events to the date you asked for rather than rolling over — so
+    # it hands back a sunset that lands before its own sunrise. Solar elevation
+    # has no date in it at all. It also behaves inside the polar circles, where
+    # sunrise/sunset simply don't exist and astral raises instead.
+    try:
+        angle = elevation(
+            Observer(latitude=config.latitude, longitude=config.longitude),
+            now.astimezone(timezone.utc),
+        )
+    except Exception as exc:
+        if not _warned_astral_failed:
+            log.warning(
+                "could not compute the sun's position for %s, %s (%s); using "
+                "fixed times.", config.latitude, config.longitude, exc,
+            )
+            _warned_astral_failed = True
+        return _fixed_is_night(config, now)
+    # Below the horizon (apparent centre, refraction included) is night. Within a
+    # minute or two of astral's own sunrise/sunset, which is well inside the
+    # daemon's one-minute tick.
+    return angle < 0.0
 
 
 def is_night(config: Config, now: datetime | None = None) -> bool:
     """Return True if it is currently night under the configured mode."""
+    global _warned_bad_mode
     now = now or datetime.now().astimezone()
     if config.mode == "sun":
         return _sun_is_night(config, now)
+    if config.mode != "fixed" and not _warned_bad_mode:
+        log.warning("unknown mode '%s' (expected 'sun' or 'fixed'); using fixed "
+                    "times.", config.mode)
+        _warned_bad_mode = True
     return _fixed_is_night(config, now)
