@@ -7,9 +7,11 @@
     lumendusk brightness set 60    set brightness to 60 %
     lumendusk brightness day       apply the day preset from config
     lumendusk brightness night     apply the night preset from config
+    lumendusk auto                 let Lumendusk drive (follow the schedule)
+    lumendusk manual               leave it to the user; freeze, night light off
+    lumendusk nightlight on|off    warm the screen now (manual control)
     lumendusk mode day             switch to full day mode now (manual override)
     lumendusk mode night           switch to full night mode now (manual override)
-    lumendusk pause / resume       freeze automation (night light off) / resume
     lumendusk location             show the current + detected location
     lumendusk location --detect    set it from the system timezone, use sun mode
     lumendusk location 51.5 -0.13  set it explicitly and switch to sun mode
@@ -57,10 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--monitor", default="all",
                    help="Monitor id (see 'brightness list'), or 'all'.")
 
-    sub.add_parser("pause", help="Freeze automation (e.g. while watching a movie).")
-    sub.add_parser("resume", help="Resume automation and snap to the current state.")
-    sub.add_parser("toggle", help="Toggle the paused state.")
-    sub.add_parser("status", help="Print current mode, phase, and paused state.")
+    sub.add_parser("auto", help="Follow the schedule and snap to the current phase.")
+    sub.add_parser("manual",
+                   help="Leave the desktop to you (freezes it, night light off).")
+    sub.add_parser("toggle", help="Switch between automatic and manual.")
+    # Kept as aliases: 'pause'/'resume' are what earlier versions and the docs
+    # called this, and they read naturally for the movie-night case.
+    sub.add_parser("pause", help="Alias for 'manual'.")
+    sub.add_parser("resume", help="Alias for 'auto'.")
+    sub.add_parser("status", help="Print control, mode, and current phase.")
 
     m = sub.add_parser("mode", help="Manually switch to full day/night mode now.")
     m.add_argument("which", choices=["day", "night"])
@@ -68,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     a = sub.add_parser("appearance",
                        help="Dark/light desktop switch (system UI + apps).")
     a.add_argument("which", choices=["dark", "light", "toggle", "status"])
+
+    n = sub.add_parser("nightlight",
+                       help="Warm the screen on/off right now (manual control).")
+    n.add_argument("which", choices=["on", "off", "toggle", "status"])
 
     loc = sub.add_parser(
         "location",
@@ -89,23 +100,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _set_paused(paused: bool) -> int:
+def _set_control(control: str) -> int:
+    """Switch between automatic and manual, and act on it straight away.
+
+    The daemon would reconcile this within a tick on its own, but the applet
+    calls this on a click — waiting up to a minute for the screen to react
+    would read as a broken button.
+    """
     cfg = config_mod.load()
-    cfg.paused = paused
+    cfg.control = control
     config_mod.save(cfg)
-    # Act immediately so the applet feels responsive (the daemon reconciles too).
-    if paused:
-        # Movie/manual pause: night light off for true colors; theme + brightness
-        # stay frozen wherever they are.
+    if control == "manual":
+        # The user's own dark/light choice now stands. Night light goes off so
+        # colors are true; theme and brightness stay exactly where they are.
         if cfg.nightlight_enabled:
             from .apply import set_nightlight
             set_nightlight(False)
-        log.info("paused; night light off, theme/brightness frozen.")
+        log.info("manual; night light off, theme/brightness left alone.")
+        print("manual — your dark/light choice will be left alone.")
     else:
-        # Resume: snap straight to the correct current phase.
+        # Back to automatic: snap straight to the correct current phase.
         from .daemon import apply_phase, current_phase
         apply_phase(current_phase(cfg), cfg)
-        log.info("resumed; applied current phase.")
+        log.info("automatic; applied the current phase.")
+        print("automatic — following the schedule again.")
     return 0
 
 
@@ -169,6 +187,8 @@ def _location_command(args: argparse.Namespace) -> int:
 # Settings that need more than a type check before we write them.
 def _validate(key: str, value: object) -> str | None:
     """Return an error message for a bad value, or None if it's fine."""
+    if key == "control" and value not in ("auto", "manual"):
+        return "control must be 'auto' or 'manual'."
     if key == "mode" and value not in ("sun", "fixed"):
         return "mode must be 'sun' or 'fixed'."
     if key in ("dark_start", "light_start"):
@@ -265,6 +285,26 @@ def _appearance_command(which: str) -> int:
     return 0 if appearance.set_mode(which) else 1
 
 
+def _nightlight_command(which: str) -> int:
+    """Turn the warm tint on or off right now.
+
+    Separate from ``nightlight_enabled`` in config, which only says whether the
+    *automation* should use night light. This is the live switch, so manual mode
+    can offer warmth without handing the schedule back to the daemon.
+    """
+    from .apply import nightlight_on, set_nightlight
+    if which == "status":
+        print("on" if nightlight_on() else "off")
+        return 0
+    if which == "toggle":
+        which = "off" if nightlight_on() else "on"
+    cfg = config_mod.load()
+    set_nightlight(which == "on", cfg.nightlight_temperature)
+    print(f"night light {which}"
+          + (f" @ {cfg.nightlight_temperature}K" if which == "on" else ""))
+    return 0
+
+
 def _apply_mode(which: str) -> int:
     """Manually apply full day or night mode (theme + night light + brightness).
 
@@ -283,9 +323,11 @@ def _status() -> int:
     from .daemon import current_phase  # local import avoids a cycle at import time
     cfg = config_mod.load()
     phase = current_phase(cfg).value
-    state = "paused" if cfg.paused else ("enabled" if cfg.enabled else "disabled")
-    print(f"mode={cfg.mode} phase={phase} state={state}")
-    if cfg.mode == "sun" and not cfg.location_is_set():
+    print(f"control={cfg.control} mode={cfg.mode} phase={phase}")
+    if not cfg.is_auto():
+        print("  manual: your dark/light choice stands until you switch back "
+              "with 'lumendusk auto'.")
+    if cfg.is_auto() and cfg.mode == "sun" and not cfg.location_is_set():
         print(f"  sun mode has no location set, so the fixed times "
               f"({cfg.light_start}–{cfg.dark_start}) are in use. Set one with: "
               f"lumendusk location <lat> <lon>")
@@ -345,16 +387,18 @@ def main(argv: list[str] | None = None) -> int:
         return _location_command(args)
     if args.command == "config":
         return _config_command(args)
-    if args.command == "pause":
-        return _set_paused(True)
-    if args.command == "resume":
-        return _set_paused(False)
+    if args.command in ("manual", "pause"):
+        return _set_control("manual")
+    if args.command in ("auto", "resume"):
+        return _set_control("auto")
     if args.command == "toggle":
-        return _set_paused(not config_mod.load().paused)
+        return _set_control("auto" if not config_mod.load().is_auto() else "manual")
     if args.command == "status":
         return _status()
     if args.command == "mode":
         return _apply_mode(args.which)
     if args.command == "appearance":
         return _appearance_command(args.which)
+    if args.command == "nightlight":
+        return _nightlight_command(args.which)
     return run_daemon(interval=args.interval, once=args.once)

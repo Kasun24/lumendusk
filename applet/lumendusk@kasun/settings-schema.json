@@ -1,27 +1,31 @@
 {
     "layout": {
         "type": "layout",
-        "pages": ["schedule", "screen"],
+        "pages": ["general", "screen"],
 
-        "schedule": {
+        "general": {
             "type": "page",
-            "title": "Schedule",
-            "sections": ["section_mode", "section_location", "section_fixed"]
+            "title": "Mode",
+            "sections": ["section_control", "section_auto", "section_manual"]
         },
-        "section_mode": {
+        "section_control": {
             "type": "section",
-            "title": "Day and night",
-            "keys": ["enabled", "mode"]
+            "title": "Decide day and night",
+            "keys": ["control"]
         },
-        "section_location": {
+        "section_auto": {
             "type": "section",
-            "title": "Your location",
-            "keys": ["location_help", "latitude", "longitude", "detect_location"]
+            "title": "Automatic",
+            "dependency": "control=auto",
+            "keys": ["mode",
+                     "location_help", "latitude", "longitude", "detect_location",
+                     "fixed_help", "dark_start", "light_start"]
         },
-        "section_fixed": {
+        "section_manual": {
             "type": "section",
-            "title": "Fixed times",
-            "keys": ["fixed_help", "dark_start", "light_start"]
+            "title": "Manual",
+            "dependency": "control=manual",
+            "keys": ["manual_help"]
         },
 
         "screen": {
@@ -32,7 +36,8 @@
         "section_nightlight": {
             "type": "section",
             "title": "Night light",
-            "keys": ["nightlight_enabled", "nightlight_temperature"]
+            "keys": ["nightlight_help", "nightlight_enabled",
+                     "nightlight_temperature"]
         },
         "section_brightness": {
             "type": "section",
@@ -42,17 +47,21 @@
         }
     },
 
-    "enabled": {
-        "type": "switch",
-        "default": true,
-        "description": "Adjust my desktop automatically",
-        "tooltip": "Turn this off to leave the desktop alone entirely. The applet's manual controls keep working."
+    "control": {
+        "type": "combobox",
+        "default": "auto",
+        "description": "Lumendusk should",
+        "options": {
+            "Adjust my desktop automatically": "auto",
+            "Leave it to me — I'll pick dark or light": "manual"
+        },
+        "tooltip": "You can switch between these from the panel menu at any time."
     },
 
     "mode": {
         "type": "combobox",
         "default": "fixed",
-        "description": "Decide day and night by",
+        "description": "Tell day from night by",
         "options": {
             "Fixed times": "fixed",
             "Sunrise and sunset": "sun"
@@ -96,7 +105,7 @@
 
     "fixed_help": {
         "type": "label",
-        "description": "24-hour times, e.g. 18:00. Only used when the mode above is \"Fixed times\"."
+        "description": "24-hour times, e.g. 18:00."
     },
 
     "dark_start": {
@@ -113,10 +122,20 @@
         "dependency": "mode=fixed"
     },
 
+    "manual_help": {
+        "type": "label",
+        "description": "Pick Light or Dark from the panel menu and it stays that way — nothing changes it on its own. The night light becomes a switch in that menu too, so you decide when the screen is warmed. Switch back to Automatic whenever you like."
+    },
+
+    "nightlight_help": {
+        "type": "label",
+        "description": "How yellow the screen goes when the night light is on. Drag left for a deeper yellow, right for closer to normal daylight. In Manual mode you switch the night light on and off from the panel menu; this sets the colour either way."
+    },
+
     "nightlight_enabled": {
         "type": "switch",
         "default": true,
-        "description": "Warm the screen at night"
+        "description": "Warm the screen automatically at night"
     },
 
     "nightlight_temperature": {
@@ -126,9 +145,8 @@
         "max": 6500,
         "step": 100,
         "units": "K",
-        "description": "Night colour temperature",
-        "tooltip": "Lower is warmer and more orange. 6500 K is normal daylight.",
-        "dependency": "nightlight_enabled"
+        "description": "Amount of yellow",
+        "tooltip": "1000 K is a deep amber; 6500 K is normal daylight (no tint)."
     },
 
     "brightness_help": {

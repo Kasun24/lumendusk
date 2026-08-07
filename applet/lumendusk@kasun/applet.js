@@ -27,7 +27,7 @@ const ENGINE = GLib.get_home_dir() + "/.local/share/lumendusk/venv/bin/lumendusk
 // Settings we mirror into config.toml. Names match the engine's config keys
 // exactly, which is what lets the sync below stay generic.
 const SYNCED_KEYS = [
-    "enabled", "mode", "latitude", "longitude", "dark_start", "light_start",
+    "control", "mode", "latitude", "longitude", "dark_start", "light_start",
     "nightlight_enabled", "nightlight_temperature",
     "brightness_enabled", "brightness_day", "brightness_night",
 ];
@@ -53,8 +53,7 @@ LumenduskApplet.prototype = {
         // the CLI, another instance, or Cinnamon's own settings.
         this.menu.connect("open-state-changed", (menu, open) => {
             if (!open) return;
-            if (this._pauseSwitch) this._pauseSwitch.setToggleState(this._readPaused());
-            if (this._darkSwitch) this._darkSwitch.setToggleState(this._readDark());
+            this._refreshModeItems();
             this._refreshBrightness();
         });
 
@@ -63,6 +62,9 @@ LumenduskApplet.prototype = {
         // slider ourselves — otherwise syncing the real value straight back to
         // the engine would re-apply it (and fight the user mid-drag).
         this._syncingSlider = false;
+        // Same guard for the night light switch, which we set from the engine's
+        // real state on every menu open.
+        this._syncingNightlight = false;
         this._buildMenu();
         this._initSettings(metadata, instanceId);
     },
@@ -134,6 +136,7 @@ LumenduskApplet.prototype = {
             } finally {
                 this._loadingSettings = false;
             }
+            this._refreshModeItems();
         });
     },
 
@@ -151,8 +154,16 @@ LumenduskApplet.prototype = {
             this._pushed[key] = value;
             let text = (typeof value === "boolean")
                 ? (value ? "true" : "false") : String(value);
-            this._runEngineAsync(["config", "set", key, text], (out, err) => {
-                if (out !== null) return;
+            // `control` gets its own command rather than `config set`, so that
+            // changing it in the dialog takes effect at once — same reason as
+            // _setControl(). Everything else is a plain stored value.
+            let argv = (key === "control" && (text === "auto" || text === "manual"))
+                ? [text] : ["config", "set", key, text];
+            this._runEngineAsync(argv, (out, err) => {
+                if (out !== null) {
+                    if (key === "control") this._refreshModeItems();
+                    return;
+                }
                 global.logError("Lumendusk: rejected " + key + "=" + text +
                                 (err ? " (" + err.trim() + ")" : ""));
                 if (!rejected) {
@@ -222,28 +233,49 @@ LumenduskApplet.prototype = {
             return;
         }
 
-        // Pause automation (e.g. while watching a movie): turns night light off
-        // for true colors and freezes theme + brightness until switched back on.
-        this._pauseSwitch = new PopupMenu.PopupSwitchMenuItem(
-            "Pause automation", this._readPaused());
-        this._pauseSwitch.connect("toggled", (item, value) =>
-            this._runEngine(value ? "pause" : "resume"));
-        this.menu.addMenuItem(this._pauseSwitch);
+        // Who is driving: Lumendusk, or the user. Radio dots rather than a
+        // switch, because "Pause automation OFF" was a double negative nobody
+        // should have to parse.
+        this._autoItem = new PopupMenu.PopupMenuItem("Automatic");
+        this._autoItem.connect("activate", () => this._setControl("auto"));
+        this.menu.addMenuItem(this._autoItem);
 
-        // Dark mode: standalone whole-desktop dark/light switch (system UI +
-        // apps), independent of the day/night automation. A manual override.
-        this._darkSwitch = new PopupMenu.PopupSwitchMenuItem(
-            "Dark mode", this._readDark());
-        this._darkSwitch.connect("toggled", (item, value) =>
-            this._runEngine(value ? "appearance dark" : "appearance light"));
-        this.menu.addMenuItem(this._darkSwitch);
+        this._manualItem = new PopupMenu.PopupMenuItem("Manual");
+        this._manualItem.connect("activate", () => this._setControl("manual"));
+        this.menu.addMenuItem(this._manualItem);
+
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // Apply the correct phase right now (theme + night light + brightness).
-        let applyNow = new PopupMenu.PopupIconMenuItem(
-            "Apply day/night now", "view-refresh-symbolic", imports.gi.St.IconType.SYMBOLIC);
-        applyNow.connect("activate", () => this._runEngine("--once"));
-        this.menu.addMenuItem(applyNow);
+        // Hidden in Automatic. Offering a dark/light choice while the schedule
+        // is running invites the obvious question — does this stick? — and the
+        // honest answer is "no, until the next transition". Better not to ask
+        // it: if you want to choose, you're in Manual.
+        this._manualSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._manualSection);
+
+        this._lightItem = new PopupMenu.PopupMenuItem("Light");
+        this._lightItem.connect("activate", () => this._setAppearance("light"));
+        this._manualSection.addMenuItem(this._lightItem);
+
+        this._darkItem = new PopupMenu.PopupMenuItem("Dark");
+        this._darkItem.connect("activate", () => this._setAppearance("dark"));
+        this._manualSection.addMenuItem(this._darkItem);
+
+        // The live warm-tint switch, not the config key of the same name: in
+        // Manual nothing schedules night light, so this is the only way to get
+        // it. Colour temperature stays in Settings.
+        this._nightlightSwitch = new PopupMenu.PopupSwitchMenuItem("Night light", false);
+        this._nightlightSwitch.connect("toggled", (item, value) => {
+            if (this._syncingNightlight) return;
+            this._runEngine("nightlight " + (value ? "on" : "off"));
+        });
+        this._manualSection.addMenuItem(this._nightlightSwitch);
+
+        // Shown in Automatic in place of the controls above: what it's doing
+        // and why, so the menu isn't just two radio buttons and a slider.
+        this._statusItem = new PopupMenu.PopupMenuItem("", { reactive: false });
+        this._statusItem.actor.set_style("font-size: 8pt;");
+        this.menu.addMenuItem(this._statusItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -255,23 +287,83 @@ LumenduskApplet.prototype = {
             this._onBrightnessChanged(value));
         this.menu.addMenuItem(this._brightnessSlider);
 
-        // Full-mode overrides: theme + night light + brightness together. These
-        // stick until the next scheduled day/night transition.
-        let dayItem = new PopupMenu.PopupMenuItem("Switch to Day mode");
-        dayItem.connect("activate", () => this._runEngine("mode day"));
-        this.menu.addMenuItem(dayItem);
-
-        let nightItem = new PopupMenu.PopupMenuItem("Switch to Night mode");
-        nightItem.connect("activate", () => this._runEngine("mode night"));
-        this.menu.addMenuItem(nightItem);
-
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // Settings (config file) — a real panel arrives with Step B2.
+        // Apply the correct phase right now (theme + night light + brightness).
+        // Hidden in Manual, where the engine would refuse anyway — a menu item
+        // that does nothing is worse than one that isn't there.
+        this._applyNow = new PopupMenu.PopupIconMenuItem(
+            "Apply day/night now", "view-refresh-symbolic", imports.gi.St.IconType.SYMBOLIC);
+        this._applyNow.connect("activate", () => this._runEngine("--once"));
+        this.menu.addMenuItem(this._applyNow);
+
         let settings = new PopupMenu.PopupIconMenuItem(
-            "Open config file", "document-edit-symbolic", imports.gi.St.IconType.SYMBOLIC);
-        settings.connect("activate", () => this._openConfig());
+            "Settings…", "preferences-system-symbolic", imports.gi.St.IconType.SYMBOLIC);
+        settings.connect("activate", () => this.configureApplet());
         this.menu.addMenuItem(settings);
+
+        let configFile = new PopupMenu.PopupIconMenuItem(
+            "Open config file", "document-edit-symbolic", imports.gi.St.IconType.SYMBOLIC);
+        configFile.connect("activate", () => this._openConfig());
+        this.menu.addMenuItem(configFile);
+
+        this._refreshModeItems();
+    },
+
+    _setControl: function (control) {
+        // `auto`/`manual` write the config *and* act on it (night light off, or
+        // snap to the current phase) — `config set control …` would only write,
+        // leaving the screen unchanged for up to a tick after a click.
+        this._runEngineAsync([control], () => {
+            this._refreshModeItems();
+            this._pullSettings();   // keep the settings dialog in step
+        });
+    },
+
+    _setAppearance: function (which) {
+        this._runEngineAsync(["appearance", which], () => this._refreshModeItems());
+    },
+
+    _refreshModeItems: function () {
+        // Read from config/gsettings rather than tracking state here: the CLI,
+        // the settings dialog and another panel instance can all change this.
+        if (!this._autoItem) return;
+        let auto = this._readControl() === "auto";
+        let dark = this._readDark();
+        this._autoItem.setShowDot(auto);
+        this._manualItem.setShowDot(!auto);
+        this._lightItem.setShowDot(!dark);
+        this._darkItem.setShowDot(dark);
+
+        this._manualSection.actor.visible = !auto;
+        this._statusItem.actor.visible = auto;
+        if (this._applyNow) this._applyNow.actor.visible = auto;
+
+        if (auto) {
+            let bySun = this._readMode() === "sun";
+            let source = bySun ? "sunrise and sunset" : "fixed times";
+            this._statusItem.label.text = "Following " + source + " · " +
+                (dark ? "night" : "day");
+            this.set_applet_tooltip("Lumendusk — automatic (" + source + ")");
+        } else {
+            this.set_applet_tooltip("Lumendusk — manual (" +
+                                    (dark ? "dark" : "light") + ")");
+            this._refreshNightlight();
+        }
+    },
+
+    _refreshNightlight: function () {
+        // gsettings shells out, so read it off the main thread. Guarded, or
+        // setting the switch to the real value would echo back as a user toggle.
+        this._runEngineAsync(["nightlight", "status"], (stdout) => {
+            if (stdout === null || !this._nightlightSwitch) return;
+            this._syncingNightlight = true;
+            try {
+                this._nightlightSwitch.setToggleState(stdout.trim() === "on");
+            } finally {
+                this._syncingNightlight = false;
+            }
+        });
     },
 
     _onBrightnessChanged: function (value) {
@@ -355,19 +447,33 @@ LumenduskApplet.prototype = {
         Util.spawnCommandLine(ENGINE + " " + args);
     },
 
-    _readPaused: function () {
-        // Read paused state straight from config.toml (cheap, no subprocess).
+    _readConfigText: function () {
+        // Straight off disk — cheap enough to do on menu-open, and avoids a
+        // subprocess round-trip just to colour in two dots.
         try {
             let path = GLib.get_user_config_dir() + "/lumendusk/config.toml";
             let [ok, data] = GLib.file_get_contents(path);
-            if (!ok) return false;
-            let text = (data instanceof Uint8Array)
+            if (!ok) return "";
+            return (data instanceof Uint8Array)
                 ? imports.byteArray.toString(data)
                 : ("" + data);
-            return /paused\s*=\s*true/.test(text);
         } catch (e) {
-            return false;
+            return "";
         }
+    },
+
+    _readControl: function () {
+        // Default to "auto" only when the file says so or is unreadable on a
+        // fresh install; anything unrecognised is treated as manual, matching
+        // the engine, so the two can't disagree about who is in charge.
+        let match = /^\s*control\s*=\s*"([^"]*)"/m.exec(this._readConfigText());
+        if (!match) return "auto";
+        return match[1] === "manual" ? "manual" : "auto";
+    },
+
+    _readMode: function () {
+        let match = /^\s*mode\s*=\s*"([^"]*)"/m.exec(this._readConfigText());
+        return match ? match[1] : "fixed";
     },
 
     _readDark: function () {

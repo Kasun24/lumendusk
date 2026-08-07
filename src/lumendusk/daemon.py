@@ -43,8 +43,8 @@ def apply_phase(phase: Phase, cfg: config_mod.Config) -> None:
     Each step is independent: a backend that fails (no ddcutil permissions, a
     missing gsettings schema) is logged and the rest still run.
     """
-    if not cfg.enabled:
-        log.info("disabled in config; skipping apply.")
+    if not cfg.is_auto():
+        log.info("manual mode; leaving the desktop as the user set it.")
         return
     dark = phase is Phase.NIGHT
 
@@ -85,24 +85,19 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
     interval = max(1, interval)
     cfg = config_mod.load()
     last: Phase | None = None
-    was_paused = cfg.paused
+    was_manual = not cfg.is_auto()
     last_wall = time.time()
 
     log.info("logging to %s", log.log_path())
 
     # Startup: apply once so the desktop matches the current phase — unless the
-    # user left automation paused.
-    if cfg.paused:
-        # Paused = manual/movie mode: drop night light for true colors, but
-        # leave theme + brightness frozen wherever the user has them.
-        if cfg.nightlight_enabled:
-            try:
-                set_nightlight(False)
-            except Exception:
-                # Before the loop's own guard, so an exception here would stop
-                # the daemon starting at all.
-                log.exception("failed to turn night light off.")
-        log.info("started paused; night light off, theme/brightness frozen.")
+    # user has put us in manual.
+    if was_manual:
+        # Manual: touch nothing at all. Not even night light — in manual that's
+        # the user's own toggle, and forcing it off here would silently undo it
+        # every login. The one-time drop happens when *switching* into manual
+        # (below), which is the movie-night case; after that it's theirs.
+        log.info("started in manual; leaving the desktop as it is.")
     else:
         phase = current_phase(cfg)
         apply_phase(phase, cfg)
@@ -126,24 +121,25 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
 
             cfg = config_mod.load()  # cheap; lets applet/config edits take effect
 
-            # Paused: freeze theme + brightness where they are, but turn night
-            # light off (true colors for movies). Toggle once, on entering pause.
-            if cfg.paused:
-                if not was_paused:
+            # Manual: leave theme + brightness where the user put them, but turn
+            # night light off (true colors). Toggled once, on entering manual.
+            if not cfg.is_auto():
+                if not was_manual:
                     if cfg.nightlight_enabled:
                         set_nightlight(False)
-                    log.info("paused; night light off, theme/brightness frozen.")
-                was_paused = True
+                    log.info("switched to manual; night light off, "
+                             "theme/brightness left alone.")
+                was_manual = True
                 continue
 
             phase = current_phase(cfg)
 
-            # Just resumed from pause: snap to the correct current state.
-            if was_paused:
-                log.info("resumed; applying current phase.")
+            # Just switched back to automatic: snap to the correct current state.
+            if was_manual:
+                log.info("switched to automatic; applying the current phase.")
                 apply_phase(phase, cfg)
                 last = phase
-                was_paused = False
+                was_manual = False
                 continue
 
             if phase != last:

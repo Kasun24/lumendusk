@@ -3,6 +3,8 @@ must never raise, whatever the user typed into the file."""
 
 from __future__ import annotations
 
+import pytest
+
 from lumendusk import config as config_mod
 from lumendusk.config import Config
 
@@ -33,7 +35,7 @@ class TestDefaults:
 class TestRoundTrip:
     def test_saved_config_loads_back_identical(self):
         original = Config(
-            mode="sun", enabled=True, paused=True,
+            control="manual", mode="sun",
             latitude=51.5074, longitude=-0.1278,
             dark_start="20:30", light_start="06:15",
             theme_accent="aqua",
@@ -45,7 +47,7 @@ class TestRoundTrip:
         loaded = config_mod.load()
         # theme_light/theme_dark are legacy read-only fields we no longer write.
         assert loaded.mode == original.mode
-        assert loaded.paused is True
+        assert loaded.control == "manual"
         assert (loaded.latitude, loaded.longitude) == (51.5074, -0.1278)
         assert loaded.dark_start == "20:30"
         assert loaded.theme_accent == "aqua"
@@ -60,9 +62,57 @@ class TestRoundTrip:
         assert leftovers == []
 
 
+class TestControl:
+    """`control` replaced the old enabled/paused pair, so old files must migrate."""
+
+    def test_defaults_to_automatic(self):
+        assert Config().control == "auto"
+        assert Config().is_auto() is True
+
+    @pytest.mark.parametrize("legacy,expected", [
+        ("paused = true\n", "manual"),
+        ("enabled = false\n", "manual"),
+        ("paused = true\nenabled = false\n", "manual"),
+        ("paused = false\nenabled = true\n", "auto"),
+        ("", "auto"),
+    ])
+    def test_old_configs_migrate(self, legacy, expected):
+        """Someone who had paused automation must not have it resume on upgrade."""
+        write_config('mode = "fixed"\n' + legacy)
+        assert config_mod.load().control == expected
+
+    def test_control_wins_over_leftover_legacy_keys(self):
+        """Once we've written `control`, stale booleans must not override it."""
+        write_config('control = "auto"\npaused = true\nenabled = false\n')
+        assert config_mod.load().control == "auto"
+
+    def test_a_nonsense_control_falls_back_to_the_default(self):
+        write_config('control = "sideways"\npaused = true\n')
+        assert config_mod.load().control == "auto"
+
+    def test_the_legacy_keys_are_no_longer_written(self):
+        """The migration is one-way; leaving them behind invites disagreement.
+
+        Only the root table matters — the legacy keys were top-level, whereas
+        ``[nightlight] enabled`` and ``[brightness] enabled`` are current
+        settings that happen to share the name.
+        """
+        config_mod.save(Config(control="manual"))
+        text = config_mod.config_path().read_text(encoding="utf-8")
+        root = text.split("\n[", 1)[0]
+        assert 'control = "manual"' in root
+        assert "paused" not in root
+        assert "enabled" not in root
+
+    def test_only_auto_counts_as_automatic(self):
+        """A typo should leave the desktop alone, not start driving it."""
+        assert Config(control="manual").is_auto() is False
+        assert Config(control="").is_auto() is False
+
+
 class TestBrokenConfig:
     def test_malformed_toml_falls_back_to_defaults(self):
-        write_config('mode = "fixed"\npaused = fals\n')
+        write_config('mode = "fixed"\ncontrol = auto\n')   # unquoted: not TOML
         assert config_mod.load() == Config()
 
     def test_malformed_toml_keeps_the_last_good_values(self):
@@ -83,7 +133,7 @@ class TestBrokenConfig:
     def test_wrong_types_fall_back_per_field(self):
         write_config(
             'mode = "fixed"\n'
-            "enabled = 7\n"                 # not a bool
+            "control = 7\n"                 # not a string
             "[location]\n"
             'latitude = "north"\n'          # not a number
             "longitude = -0.13\n"
@@ -91,7 +141,7 @@ class TestBrokenConfig:
             'temperature = "warm"\n'
         )
         cfg = config_mod.load()
-        assert cfg.enabled is True           # default
+        assert cfg.control == "auto"         # default
         assert cfg.latitude == 0.0           # default
         assert cfg.longitude == -0.13        # the valid one survives
         assert cfg.nightlight_temperature == 4000

@@ -29,6 +29,30 @@ def _gsettings_set(schema: str, key: str, value: str) -> bool:
         return False
 
 
+def _gsettings_get(schema: str, key: str) -> str | None:
+    if not shutil.which("gsettings"):
+        return None
+    try:
+        out = subprocess.run(
+            ["gsettings", "get", schema, key],
+            check=True, capture_output=True, text=True,
+        )
+        return out.stdout.strip().strip("'")
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def nightlight_on() -> bool:
+    """Is the screen warmed right now?
+
+    Reads Cinnamon's own key rather than remembering what we last set, so the
+    manual toggle stays honest when the user changes it in System Settings.
+    Unknown (no gsettings, fallback backend in use) reads as off — the toggle
+    then shows off, and switching it on is still the right next action.
+    """
+    return _gsettings_get(_SCHEMA, "night-light-enabled") == "true"
+
+
 def _fallback(on: bool, temperature: int) -> None:
     """Best-effort night light without Cinnamon's own keys."""
     try:

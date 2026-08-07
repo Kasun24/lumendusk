@@ -47,13 +47,19 @@ class Config:
     mapped to/from these flat fields by :func:`load` and :func:`save`.
     """
 
-    # day/night decision. The default is "fixed" on purpose: "sun" needs a real
-    # latitude/longitude, and we have no way to guess one offline. Fixed times
-    # are sensible everywhere; the user switches to sun mode once they've set
-    # their location.
+    # Who is driving the desktop:
+    #   "auto"   — Lumendusk follows the schedule below.
+    #   "manual" — you pick dark or light; nothing changes it on its own.
+    # One field on purpose. This used to be two booleans (``enabled`` and
+    # ``paused``) that a user could not tell apart, because both of them just
+    # meant "stop automating".
+    control: str = "auto"            # "auto" or "manual"
+
+    # How "auto" decides day from night. The default is "fixed" on purpose:
+    # "sun" needs a real latitude/longitude, and we have no way to guess one
+    # offline. Fixed times are sensible everywhere; the user switches to sun
+    # mode once they've set their location. Ignored while control = "manual".
     mode: str = "fixed"              # "sun" (astral) or "fixed"
-    enabled: bool = True             # master on/off
-    paused: bool = False             # runtime: freeze automation (e.g. movie)
     latitude: float = 0.0
     longitude: float = 0.0
     dark_start: str = "19:00"        # fixed mode: when night begins
@@ -77,6 +83,15 @@ class Config:
     brightness_day: int = 80
     brightness_night: int = 35
     brightness_fade_minutes: int = 0
+
+    def is_auto(self) -> bool:
+        """True if Lumendusk should be driving the desktop itself.
+
+        Anything other than an explicit "auto" counts as manual: a config file
+        holding a typo should leave the user's desktop alone rather than start
+        changing it under them.
+        """
+        return self.control == "auto"
 
     def location_is_set(self) -> bool:
         """True if a real latitude/longitude has been configured.
@@ -122,10 +137,30 @@ def _from_toml(data: dict) -> Config:
     def _int(src: dict, key: str, default: int) -> int:
         return int(_num(src, key, default))
 
+    def _control(src: dict, default: str) -> str:
+        """Read ``control``, migrating config files written before it existed.
+
+        Older versions had two separate booleans that both meant "don't
+        automate": ``enabled = false`` (leave the desktop alone entirely) and
+        ``paused = true`` (freeze where it is). Either one becomes "manual", so
+        someone who had paused automation and then upgraded doesn't get their
+        theme yanked out from under them on the next tick.
+
+        The old keys are only consulted when ``control`` is absent, so a file we
+        have already rewritten is never second-guessed by leftovers.
+        """
+        value = src.get("control")
+        if isinstance(value, str) and value in ("auto", "manual"):
+            return value
+        if value is not None:
+            return default  # present but nonsense — don't fall through to legacy
+        if _bool(src, "paused", False) or not _bool(src, "enabled", True):
+            return "manual"
+        return default
+
     return Config(
+        control=_control(data, d.control),
         mode=_str(data, "mode", d.mode),
-        enabled=_bool(data, "enabled", d.enabled),
-        paused=_bool(data, "paused", d.paused),
         latitude=_num(loc, "latitude", d.latitude),
         longitude=_num(loc, "longitude", d.longitude),
         dark_start=_str(fixed, "dark_start", d.dark_start),
@@ -156,15 +191,17 @@ def _to_toml(c: Config) -> str:
         "# applet's pause switch), which discards any comments you add. Edit the\n"
         "# values freely — just don't expect your own notes to survive.\n"
         "#\n"
+        "# control = \"auto\"   Lumendusk follows the schedule below.\n"
+        "# control = \"manual\" you choose dark or light yourself and nothing\n"
+        "#                    changes it (the screen is never warmed either).\n"
+        "#                    Switch with `lumendusk auto` / `lumendusk manual`.\n"
+        f"control = {s(c.control)}\n\n"
+        "# How \"auto\" tells day from night. Ignored in manual.\n"
         "# mode = \"fixed\" uses the [fixed] times below (the default).\n"
         "# mode = \"sun\"   uses your latitude/longitude (offline, via astral).\n"
         "#                Set [location] first — sun mode is ignored while the\n"
-        "#                latitude/longitude are still 0, 0.\n\n"
-        f"mode = {s(c.mode)}\n"
-        f"enabled = {b(c.enabled)}\n"
-        "# paused freezes all automation where it is (e.g. while watching a\n"
-        "# movie). Toggle it with `lumendusk pause` / `lumendusk resume`.\n"
-        f"paused = {b(c.paused)}\n\n"
+        "#                latitude/longitude are still 0, 0.\n"
+        f"mode = {s(c.mode)}\n\n"
         "[location]\n"
         "# Your decimal latitude/longitude, e.g. 51.5074 / -0.1278 for London.\n"
         "# Only used when mode = \"sun\".\n"

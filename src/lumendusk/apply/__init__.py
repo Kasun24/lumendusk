@@ -5,6 +5,6 @@ implementations behind the same function names.
 """
 
 from .theme import set_theme
-from .nightlight import set_nightlight
+from .nightlight import set_nightlight, nightlight_on
 
-__all__ = ["set_theme", "set_nightlight"]
+__all__ = ["set_theme", "set_nightlight", "nightlight_on"]

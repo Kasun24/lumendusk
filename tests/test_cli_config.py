@@ -29,8 +29,8 @@ class TestShow:
     def test_booleans_are_lowercase_words(self, capsys):
         """The applet parses these literally; Python's "True" wouldn't match."""
         values = show(capsys)
-        assert values["enabled"] == "true"
-        assert values["paused"] == "false"
+        assert values["nightlight_enabled"] == "true"
+        assert values["brightness_enabled"] == "false"
 
     def test_reflects_what_was_saved(self, capsys):
         config_mod.save(config_mod.Config(mode="sun", latitude=6.9333,

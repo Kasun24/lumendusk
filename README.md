@@ -22,15 +22,17 @@ macOS (menu-bar extra).
 
 🚧 Early development — Phase 1 (Linux Mint). Working today:
 
+- Two modes, **Automatic** and **Manual**, switchable from the panel menu.
+  Automatic follows the schedule; Manual hands the desktop back to you.
 - Sun (offline, via `astral`) or fixed-time day/night detection.
 - **Whole-desktop dark/light switching** — driven by Mint's own style catalog,
   it moves the shell, panel, window borders, GTK/GTK4 apps, Flatpak apps (XApp
   portal), icons and accent together (not just the GTK theme), and night light
-  on/off. There's a **Dark mode** switch in the applet too.
+  on/off.
 - A brightness read/set/list tool across sysfs/brightnessctl, ddcutil, and
   xrandr backends (Step B1).
-- A Cinnamon **panel applet** with a brightness slider, day/night presets, and a
-  **"Pause automation"** switch (freeze everything, e.g. while watching a movie).
+- A Cinnamon **panel applet**: the mode switch, Light/Dark and a night light
+  toggle in Manual, and a brightness slider.
 - A **settings panel** (right-click → Configure) for mode, location, times,
   night-light warmth and brightness presets — including one-click location
   detection from your system timezone.
@@ -48,6 +50,23 @@ Next: brightness on day/night transitions (Step B3).
   and (if enabled) sets the brightness preset.
 - Applies only *on transitions*, so a manual change you make by hand sticks until
   the next transition. Wakes about once a minute; idle in between.
+
+### Automatic and Manual
+
+One switch decides who is driving, and it's the first thing in the panel menu.
+
+**Automatic** is the normal state: Lumendusk follows your schedule, and the menu
+just tells you what it's doing ("Following sunrise and sunset · night"). It
+deliberately offers no dark/light buttons here — a choice that silently expires
+at the next sunrise is worse than no choice at all.
+
+**Manual** hands the desktop back to you. The menu grows **Light** / **Dark**
+and a **Night light** switch, and nothing changes on its own until you switch
+back — not on a transition, not after a suspend, not on your next login.
+Switching *into* Manual drops the night light once, so colors are true for a
+film; after that the toggle is yours.
+
+Both live in the settings panel too, so the menu and Configure never disagree.
 
 ## Install (Linux Mint / Cinnamon)
 
@@ -85,9 +104,9 @@ unless you pass `--purge`.
 
 ## Setting it up
 
-**Right-click the panel icon → Configure.** Everything lives there: whether to
-follow the sun or fixed times, your location, night-light warmth, and the
-brightness presets.
+**Right-click the panel icon → Configure.** Everything lives there: Automatic
+vs. Manual, whether to follow the sun or fixed times, your location, how yellow
+the night light goes, and the brightness presets.
 
 Day/night comes from either your **location** (sunrise/sunset, computed
 offline) or **fixed times**. Fixed times (dark 19:00, light 07:00) are the
@@ -120,13 +139,16 @@ anything changes, so comments you add won't survive.
 ```bash
 lumendusk --once                 # apply the correct day/night state now, then exit
 lumendusk                        # run the background daemon
-lumendusk status                 # mode / phase / paused, plus config + log paths
+lumendusk status                 # control / mode / phase, plus config + log paths
+lumendusk auto                   # follow the schedule, and apply it right now
+lumendusk manual                 # leave the desktop to you (night light off)
+lumendusk toggle                 # flip between the two
+lumendusk nightlight on|off|toggle|status   # the warm tint, right now
 lumendusk location               # show the current + auto-detected location
 lumendusk location --detect      # set it from the system timezone
 lumendusk location LAT LON       # set your location and switch to sun mode
 lumendusk config show            # every setting as key=value
 lumendusk config set KEY VALUE   # change one setting (validated)
-lumendusk pause | resume         # freeze automation (e.g. while watching a movie)
 lumendusk brightness list        # show monitors + which backend each uses
 lumendusk brightness get         # current brightness
 lumendusk brightness set 60      # set brightness to 60%
@@ -136,6 +158,11 @@ lumendusk appearance toggle      # flip whole-desktop dark <-> light (or dark|li
 # From a source checkout without installing:
 PYTHONPATH=src python3 -m lumendusk --once
 ```
+
+`pause` and `resume` still work as aliases for `manual` and `auto`. If you're
+upgrading, a config with the old `enabled = false` or `paused = true` becomes
+`control = "manual"` the first time it's read — an upgrade shouldn't start
+changing a desktop that was deliberately left alone.
 
 ## Troubleshooting
 
