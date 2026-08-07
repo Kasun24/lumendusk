@@ -187,8 +187,8 @@ def _to_toml(c: Config) -> str:
     return (
         "# Lumendusk configuration\n"
         "#\n"
-        "# NOTE: Lumendusk rewrites this file when settings change (e.g. the\n"
-        "# applet's pause switch), which discards any comments you add. Edit the\n"
+        "# NOTE: Lumendusk rewrites this file when settings change (e.g. from\n"
+        "# the panel menu), which discards any comments you add. Edit the\n"
         "# values freely — just don't expect your own notes to survive.\n"
         "#\n"
         "# control = \"auto\"   Lumendusk follows the schedule below.\n"

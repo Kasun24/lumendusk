@@ -69,8 +69,9 @@ Manage it from Cinnamon's "Startup Applications", or:
 The engine lives in its own venv ($VENV) — nothing was installed into your
 system Python. Command line, if you want it:
   $VENV/bin/lumendusk --once      # apply the correct state right now
-  $VENV/bin/lumendusk status      # mode / phase / paused, plus file locations
-  $VENV/bin/lumendusk pause       # freeze automation (movie mode)
+  $VENV/bin/lumendusk status      # control / mode / phase, plus file locations
+  $VENV/bin/lumendusk manual      # leave the desktop to you (movie mode)
+  $VENV/bin/lumendusk auto        # follow the schedule again
 
 The daemon runs detached, so if something doesn't happen, look here:
   tail -f ~/.local/state/lumendusk/lumendusk.log

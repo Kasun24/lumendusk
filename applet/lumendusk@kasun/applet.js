@@ -20,9 +20,41 @@ const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
 const Mainloop = imports.mainloop;
 
-// The engine runs from its own venv (created by install.sh), so we don't touch
-// the system Python. Absolute path keeps it working regardless of the panel's PATH.
-const ENGINE = GLib.get_home_dir() + "/.local/share/lumendusk/venv/bin/lumendusk";
+// Where the engine might be, best first. install.sh builds a venv so we don't
+// touch the system Python, but that is not the only way it gets installed — a
+// plain `pip install --user lumendusk`, a distro package, or a dev checkout all
+// put it somewhere else, and an applet that only knows one path calls those
+// "not installed".
+//
+// PATH is checked last rather than first: the panel inherits the session's PATH
+// from login, which on Mint often predates ~/.local/bin being on it, so a hit
+// there is a bonus rather than something to rely on.
+const ENGINE_CANDIDATES = [
+    GLib.get_home_dir() + "/.local/share/lumendusk/venv/bin/lumendusk",
+    GLib.get_home_dir() + "/.local/bin/lumendusk",
+    "/usr/local/bin/lumendusk",
+    "/usr/bin/lumendusk",
+];
+
+let _enginePath = null;
+
+function findEngine() {
+    // Cached once found, re-checked while missing: installing the engine with
+    // the applet already sitting in the panel should start working on the next
+    // menu open, not require a Cinnamon restart. A path that has resolved can't
+    // move without a reinstall, so caching that direction is safe.
+    if (_enginePath !== null) return _enginePath;
+
+    for (let i = 0; i < ENGINE_CANDIDATES.length; i++) {
+        if (GLib.file_test(ENGINE_CANDIDATES[i], GLib.FileTest.IS_EXECUTABLE)) {
+            _enginePath = ENGINE_CANDIDATES[i];
+            return _enginePath;
+        }
+    }
+    // May be null — callers treat that as "not installed".
+    _enginePath = GLib.find_program_in_path("lumendusk");
+    return _enginePath;
+}
 
 // Settings we mirror into config.toml. Names match the engine's config keys
 // exactly, which is what lets the sync below stay generic.
@@ -225,8 +257,13 @@ LumenduskApplet.prototype = {
             let missing = new PopupMenu.PopupMenuItem(
                 "Engine not found — run install.sh", { reactive: false });
             this.menu.addMenuItem(missing);
+            // Name the first candidate only. The full list is four paths plus
+            // PATH, which is a wall of text in a panel menu and answers a
+            // question nobody asked; the log has all of it if it's really
+            // installed somewhere unusual.
             let hint = new PopupMenu.PopupMenuItem(
-                "Expected: " + ENGINE, { reactive: false });
+                "Looked in " + ENGINE_CANDIDATES[0] + " and on PATH",
+                { reactive: false });
             hint.actor.set_style("font-size: 8pt;");
             this.menu.addMenuItem(hint);
             this.set_applet_tooltip("Lumendusk — engine not installed");
@@ -403,13 +440,14 @@ LumenduskApplet.prototype = {
         // Runs the engine off the compositor thread and hands stdout back.
         // stdout is null when it couldn't run or exited non-zero; stderr comes
         // along so callers can report why. Never blocks the panel.
-        if (!this._engineInstalled()) {
-            callback(null, "engine not installed at " + ENGINE);
+        let engine = findEngine();
+        if (engine === null) {
+            callback(null, "engine not installed");
             return;
         }
         try {
             let proc = new Gio.Subprocess({
-                argv: [ENGINE].concat(argv),
+                argv: [engine].concat(argv),
                 flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             });
             proc.init(null);
@@ -435,16 +473,18 @@ LumenduskApplet.prototype = {
     },
 
     _engineInstalled: function () {
-        return GLib.file_test(ENGINE, GLib.FileTest.IS_EXECUTABLE);
+        return findEngine() !== null;
     },
 
     _runEngine: function (args) {
-        if (!this._engineInstalled()) {
-            global.logError("Lumendusk: engine not found at " + ENGINE +
+        let engine = findEngine();
+        if (engine === null) {
+            global.logError("Lumendusk: engine not found (looked in " +
+                            ENGINE_CANDIDATES.join(", ") + " and on PATH)" +
                             " — run install.sh from the repo.");
             return;
         }
-        Util.spawnCommandLine(ENGINE + " " + args);
+        Util.spawnCommandLine(GLib.shell_quote(engine) + " " + args);
     },
 
     _readConfigText: function () {
