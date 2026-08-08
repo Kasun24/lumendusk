@@ -11,6 +11,12 @@ Lumendusk is a lightweight tool that adjusts your desktop automatically, with no
 The main way you use it is as a **panel applet** you add to your panel — a small
 icon with a dropdown menu. A background engine does the work behind it.
 
+<img src="packaging/screenshot.png" alt="The Lumendusk panel menu: an Automatic/Manual switch, a status line reading &quot;Following fixed times · day&quot;, a brightness slider, and Apply day/night now, Settings and Open config file" width="341">
+
+In **Automatic** the menu just reports what it's doing. Switch to **Manual**
+and it grows Light / Dark buttons and a night light toggle — see
+[Automatic and Manual](#automatic-and-manual).
+
 Built for **Linux Mint (Cinnamon)** first, then Windows (system-tray icon) and
 macOS (menu-bar extra).
 
