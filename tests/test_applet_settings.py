@@ -33,7 +33,7 @@ def schema() -> dict:
 def synced_keys() -> list:
     """The SYNCED_KEYS array out of applet.js."""
     text = APPLET_JS.read_text(encoding="utf-8")
-    match = re.search(r"const SYNCED_KEYS = \[(.*?)\];", text, re.S)
+    match = re.search(r"const SYNCED_KEYS = \[(.*?)\];", text, re.DOTALL)
     assert match, "SYNCED_KEYS not found in applet.js"
     return re.findall(r'"([^"]+)"', match.group(1))
 

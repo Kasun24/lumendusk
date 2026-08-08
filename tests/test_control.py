@@ -261,7 +261,8 @@ class TestStatus:
         assert main(["status"]) == 0
         out = capsys.readouterr().out
         assert "control=manual" in out
-        assert "mode=" in out and "phase=" in out
+        assert "mode=" in out
+        assert "phase=" in out
 
     def test_does_not_nag_about_a_missing_location_while_manual(self, capsys):
         """In manual the location is irrelevant — the warning would be noise."""

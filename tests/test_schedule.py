@@ -17,7 +17,7 @@ def at(hour: int, minute: int = 0, offset_hours: float = 0) -> datetime:
 
 class TestFixedMode:
     @pytest.mark.parametrize("hour,expected_night", [
-        (0, True), (6, True), (6, True), (7, False), (12, False),
+        (0, True), (6, True), (7, False), (12, False),
         (18, False), (19, True), (23, True),
     ])
     def test_night_wraps_past_midnight(self, hour, expected_night):

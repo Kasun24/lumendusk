@@ -29,6 +29,22 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  lint:
+    # Its own job rather than a step inside pytest: lint failures and test
+    # failures answer different questions, and a matrix would run the same
+    # check three times for one answer. Rules are pinned in pyproject.toml so
+    # a ruff release can't fail CI on rules nobody chose.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install -e '.[dev]'
+      - name: Lint
+        run: ruff check .
+
   applet:
     # The applet is JavaScript run by Cinnamon's GJS, so the Python tests can't
     # see it. A syntax check at least stops a typo reaching someone's panel,

@@ -27,7 +27,7 @@ classifiers = [
 [project.optional-dependencies]
 # Sunrise/sunset from location. Enable with: pip install lumendusk[sun]
 sun = ["astral>=3.2"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.16"]
 
 [project.urls]
 Homepage = "https://github.com/Kasun24/lumendusk"
@@ -43,3 +43,46 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+# Pinned rather than left to ruff's defaults, which widen between releases —
+# otherwise a routine ruff upgrade fails CI on rules nobody chose.
+target-version = "py39"
+line-length = 90
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "UP",       # pyupgrade
+    "B",        # bugbear
+    "RUF",      # ruff's own
+    "PT",       # pytest style
+    "FURB",     # modernisation
+    "EXE",      # shebang/executable-bit mismatches
+]
+# Two families are left out on purpose, both because their advice is wrong here:
+#
+# BLE (blind except) — the daemon's robustness model *is* catching Exception.
+#   "Never let one bad tick end the daemon" is the rule the loop is built on,
+#   and it runs detached with no console to notice a crash.
+#
+# TRY — TRY004 wants TypeError where config.py raises ValueError for a
+#   malformed root table, but config.load() catches (OSError, ValueError) to
+#   fall back to defaults. Taking the advice would turn a recoverable bad
+#   config into a daemon that won't start.
+ignore = [
+    # The prose in this codebase — docstrings, comments, log messages a user
+    # reads — uses real en/em dashes on purpose. These rules flag every one.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+# `parametrize("hour,expected", …)` reads better than a tuple of names and is
+# the form used throughout the suite.
+parametrize-names-type = "csv"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests get long, deliberately descriptive names and inline fixture classes.
+"tests/*" = ["E501"]

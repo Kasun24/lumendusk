@@ -4,7 +4,7 @@ Phase 1 targets Linux Mint / Cinnamon. Later phases add Windows and macOS
 implementations behind the same function names.
 """
 
+from .nightlight import nightlight_on, set_nightlight
 from .theme import set_theme
-from .nightlight import set_nightlight, nightlight_on
 
-__all__ = ["set_theme", "set_nightlight", "nightlight_on"]
+__all__ = ["nightlight_on", "set_nightlight", "set_theme"]

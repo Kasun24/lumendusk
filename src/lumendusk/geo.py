@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 # Debian/Ubuntu/Mint keep the name here; /etc/localtime is a symlink into the
 # zoneinfo tree on basically everything else.
@@ -45,7 +45,7 @@ class DetectedLocation(NamedTuple):
     timezone: str
 
 
-def system_timezone() -> Optional[str]:
+def system_timezone() -> str | None:
     """Return the IANA timezone name (e.g. "Asia/Colombo"), or None."""
     # TZ wins when set, matching what the C library itself does.
     tz = os.environ.get("TZ", "").strip()
@@ -73,14 +73,14 @@ def system_timezone() -> Optional[str]:
     return None
 
 
-def _parse_iso6709(value: str) -> Optional[tuple]:
+def _parse_iso6709(value: str) -> tuple | None:
     """Turn "+0656+07951" into (6.933…, 79.85). None if it isn't that shape."""
     match = _ISO6709.match(value.strip())
     if not match:
         return None
     lat_sign, lat_d, lat_m, lat_s, lon_sign, lon_d, lon_m, lon_s = match.groups()
 
-    def combine(sign: str, deg: str, minute: str, second: Optional[str]) -> float:
+    def combine(sign: str, deg: str, minute: str, second: str | None) -> float:
         total = int(deg) + int(minute) / 60 + (int(second) / 3600 if second else 0)
         return -total if sign == "-" else total
 
@@ -91,7 +91,7 @@ def _parse_iso6709(value: str) -> Optional[tuple]:
     return lat, lon
 
 
-def _zone_table_lookup(timezone: str) -> Optional[tuple]:
+def _zone_table_lookup(timezone: str) -> tuple | None:
     """Find a timezone's coordinates in the system's zone table."""
     for filename in _ZONE_TABS:
         path = _ZONEINFO_DIR / filename
@@ -112,7 +112,7 @@ def _zone_table_lookup(timezone: str) -> Optional[tuple]:
     return None
 
 
-def detect_location() -> Optional[DetectedLocation]:
+def detect_location() -> DetectedLocation | None:
     """Best-effort location from the system timezone. None if we can't tell.
 
     Deliberately returns None rather than a guess when anything is missing —

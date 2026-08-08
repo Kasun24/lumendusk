@@ -127,8 +127,10 @@ def _set(schema: str, key: str, value: str) -> bool:
                     _GSETTINGS_TIMEOUT)
         return False
     except (subprocess.CalledProcessError, OSError) as exc:
+        # OSError has no stderr; CalledProcessError may have an empty one.
+        detail = getattr(exc, "stderr", None)
         log.warning("set %s %s '%s' failed: %s", schema, key, value,
-                    getattr(exc, "stderr", "") and exc.stderr.strip() or exc)
+                    detail.strip() if detail else exc)
         return False
 
 

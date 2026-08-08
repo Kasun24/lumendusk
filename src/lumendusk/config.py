@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import log
@@ -304,4 +304,4 @@ def save(config: Config) -> None:
 
 # Silence "asdict imported but unused" for tooling; it's part of the public
 # surface people reach for when serializing Config elsewhere.
-__all__ = ["Config", "config_dir", "config_path", "load", "save", "asdict"]
+__all__ = ["Config", "asdict", "config_dir", "config_path", "load", "save"]

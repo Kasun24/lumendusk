@@ -31,11 +31,9 @@ import argparse
 import dataclasses
 import sys
 
-from . import __version__
+from . import __version__, geo, log
 from . import brightness as brightness_mod
 from . import config as config_mod
-from . import geo
-from . import log
 from .daemon import run_daemon
 
 

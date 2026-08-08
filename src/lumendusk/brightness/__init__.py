@@ -73,8 +73,8 @@ def get_brightness(selector: str = "all") -> list[tuple[str, int | None]]:
 __all__ = [
     "Backlight",
     "BacklightError",
+    "get_brightness",
     "list_monitors",
     "select",
     "set_brightness",
-    "get_brightness",
 ]

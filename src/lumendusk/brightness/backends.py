@@ -32,7 +32,7 @@ class BacklightError(RuntimeError):
 _TIMEOUT = 10
 
 
-def _run(argv: list[str], what: str) -> "subprocess.CompletedProcess[str]":
+def _run(argv: list[str], what: str) -> subprocess.CompletedProcess[str]:
     """Run a backend command, converting every failure into BacklightError.
 
     Callers already handle BacklightError per monitor, so folding timeouts and
@@ -65,8 +65,10 @@ class Backlight:
         raise NotImplementedError
 
     @staticmethod
-    def _clamp(percent: int) -> int:
-        return max(0, min(100, int(round(percent))))
+    def _clamp(percent: float) -> int:
+        # float, not int: backends divide to normalise (raw / max * 100), so a
+        # non-integer arrives here routinely. round() already returns an int.
+        return max(0, min(100, round(percent)))
 
 
 class SysfsBacklight(Backlight):
@@ -93,7 +95,7 @@ class SysfsBacklight(Backlight):
             _run(["brightnessctl", "--device", self.id, "set", f"{percent}%"],
                  "brightnessctl")
             return
-        raw = int(round(percent / 100 * self._max))
+        raw = round(percent / 100 * self._max)
         try:
             (self._path / "brightness").write_text(str(raw))
         except PermissionError as exc:

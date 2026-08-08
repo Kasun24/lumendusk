@@ -80,4 +80,4 @@ def exception(msg: str, *args: object) -> None:
     _configure().exception(msg, *args)
 
 
-__all__ = ["state_dir", "log_path", "info", "warning", "error", "exception"]
+__all__ = ["error", "exception", "info", "log_path", "state_dir", "warning"]

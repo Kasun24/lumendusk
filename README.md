@@ -186,6 +186,7 @@ Lumendusk keeps running on the last good settings rather than exiting.
 ```bash
 pip install -e '.[sun,dev]'
 pytest
+ruff check .                             # rules are pinned in pyproject.toml
 node tests/applet_engine_resolution.js   # the applet's engine lookup
 ```
 
