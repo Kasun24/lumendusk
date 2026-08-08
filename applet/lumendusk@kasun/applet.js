@@ -91,6 +91,24 @@ const SYNCED_KEYS = [
     "brightness_enabled", "brightness_day", "brightness_night",
 ];
 
+function keepOpen(item) {
+    // Cinnamon closes the menu whenever a menu item is activated — popupMenu.js
+    // hands `keepMenu = false` to activate() on button release. That's right for
+    // an item that does its one thing and is finished (Settings, Open config
+    // file), and wrong for the items this wraps, which the menu is also
+    // *showing the state of*: clicking Manual is what reveals Light/Dark, so
+    // closing at that moment hides the controls the click just unlocked, and
+    // choosing an appearance gives you no chance to see the dot move or change
+    // your mind.
+    //
+    // PopupSwitchMenuItem already opts out this way (which is why the night
+    // light switch behaves); this gives plain items the same treatment.
+    item.activate = function (event) {
+        PopupMenu.PopupBaseMenuItem.prototype.activate.call(this, event, true);
+    };
+    return item;
+}
+
 function LumenduskApplet(metadata, orientation, panelHeight, instanceId) {
     this._init(metadata, orientation, panelHeight, instanceId);
 }
@@ -306,11 +324,11 @@ LumenduskApplet.prototype = {
         // Who is driving: Lumendusk, or the user. Radio dots rather than a
         // switch, because "Pause automation OFF" was a double negative nobody
         // should have to parse.
-        this._autoItem = new PopupMenu.PopupMenuItem("Automatic");
+        this._autoItem = keepOpen(new PopupMenu.PopupMenuItem("Automatic"));
         this._autoItem.connect("activate", () => this._setControl("auto"));
         this.menu.addMenuItem(this._autoItem);
 
-        this._manualItem = new PopupMenu.PopupMenuItem("Manual");
+        this._manualItem = keepOpen(new PopupMenu.PopupMenuItem("Manual"));
         this._manualItem.connect("activate", () => this._setControl("manual"));
         this.menu.addMenuItem(this._manualItem);
 
@@ -323,11 +341,11 @@ LumenduskApplet.prototype = {
         this._manualSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._manualSection);
 
-        this._lightItem = new PopupMenu.PopupMenuItem("Light");
+        this._lightItem = keepOpen(new PopupMenu.PopupMenuItem("Light"));
         this._lightItem.connect("activate", () => this._setAppearance("light"));
         this._manualSection.addMenuItem(this._lightItem);
 
-        this._darkItem = new PopupMenu.PopupMenuItem("Dark");
+        this._darkItem = keepOpen(new PopupMenu.PopupMenuItem("Dark"));
         this._darkItem.connect("activate", () => this._setAppearance("dark"));
         this._manualSection.addMenuItem(this._darkItem);
 
