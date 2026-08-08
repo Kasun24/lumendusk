@@ -42,6 +42,17 @@ def _gsettings_get(schema: str, key: str) -> str | None:
         return None
 
 
+def _gsettings_int(schema: str, key: str) -> int | None:
+    """Read a numeric key. gsettings prints these typed — ``uint32 4000``."""
+    raw = _gsettings_get(schema, key)
+    if raw is None:
+        return None
+    try:
+        return int(raw.split()[-1])
+    except ValueError:
+        return None
+
+
 def nightlight_on() -> bool:
     """Is the screen warmed right now?
 
@@ -71,7 +82,31 @@ def _fallback(on: bool, temperature: int) -> None:
                 "(cinnamon keys, gammastep, xsct).")
 
 
-def set_nightlight(on: bool, temperature: int = 4000) -> None:
+def _already(on: bool, temperature: int) -> bool:
+    """Is the screen already in the requested state, exactly?
+
+    Off is just the master switch. On has to match the temperature and the
+    schedule mode too, or a warmth change (or a stray switch back to Cinnamon's
+    own 'auto' schedule) would be skipped as "already on".
+
+    Only ever used to skip work: an unreadable key gives None, which matches
+    nothing, so uncertainty falls through to writing.
+    """
+    enabled = _gsettings_get(_SCHEMA, "night-light-enabled")
+    if not on:
+        return enabled == "false"
+    return (enabled == "true"
+            and _gsettings_int(_SCHEMA, "night-light-temperature") == int(temperature)
+            and _gsettings_get(_SCHEMA, "night-light-schedule-mode") == "always")
+
+
+def set_nightlight(on: bool, temperature: int = 4000, force: bool = False) -> None:
+    # Same reasoning as apply_variant: the daemon applies a phase on startup,
+    # on resume and when you switch back to automatic, and usually finds night
+    # light already where it wants it. `force` is for the explicit "apply now".
+    if not force and _already(on, temperature):
+        log.info("night light already %s.", "on" if on else "off")
+        return
     if on:
         # Cinnamon stores temperature as a uint; gsettings accepts the bare int.
         _gsettings_set(_SCHEMA, "night-light-temperature", str(int(temperature)))

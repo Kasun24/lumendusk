@@ -13,8 +13,8 @@ from ..config import Config
 from . import appearance
 
 
-def set_theme(dark: bool, config: Config) -> None:
+def set_theme(dark: bool, config: Config, force: bool = False) -> None:
     mode = "dark" if dark else "light"
     # Blank accent = keep the user's current accent (auto-detected).
     accent = (config.theme_accent or "").strip() or None
-    appearance.set_mode(mode, accent=accent)
+    appearance.set_mode(mode, accent=accent, force=force)
