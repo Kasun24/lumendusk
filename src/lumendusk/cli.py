@@ -337,7 +337,10 @@ def _status() -> int:
 def _brightness_command(args: argparse.Namespace) -> int:
     action = args.action
     if action == "list":
-        monitors = brightness_mod.list_monitors()
+        # The diagnostic command probes for real. Someone runs this straight
+        # after plugging a monitor in, or to find out why one is missing — a
+        # cached answer is the wrong kind of fast.
+        monitors = brightness_mod.list_monitors(refresh=True)
         if not monitors:
             print("no controllable monitors detected. For external monitors, "
                   "install ddcutil, load the i2c-dev module, and add yourself "

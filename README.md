@@ -181,6 +181,13 @@ That's the first place to look if a theme, night light, or brightness change
 didn't happen — a missing backend or an unreadable config is reported there.
 Lumendusk keeps running on the last good settings rather than exiting.
 
+Monitor detection is cached in `~/.cache/lumendusk/monitors.json`, because
+`ddcutil detect` costs about half a second and every brightness change pays
+it. The cache is keyed on which displays the kernel reports as connected, so
+plugging one in invalidates it at once. `lumendusk brightness list` always
+probes for real — use it if a monitor seems to be missing. The cache is safe
+to delete at any time.
+
 ## Development
 
 ```bash

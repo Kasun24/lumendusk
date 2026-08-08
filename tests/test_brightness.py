@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 
 import pytest
 
 from lumendusk import brightness as brightness_mod
-from lumendusk.brightness import backends
+from lumendusk.brightness import backends, monitors
 from lumendusk.brightness.backends import (
     BacklightError,
     DdcutilBacklight,
@@ -266,3 +267,92 @@ class TestHangingCommands:
         monkeypatch.setattr(backends.subprocess, "run", gone)
         with pytest.raises(BacklightError, match="ddcutil"):
             DdcutilBacklight(1).get()
+
+
+class TestDiscoveryCache:
+    """Caching monitor discovery, and — the harder half — invalidating it.
+
+    `ddcutil detect` costs ~0.5 s and runs on every brightness operation. The
+    applet shells out to the CLI, so each slider move is a fresh process paying
+    it again; only an on-disk cache is shared across those.
+
+    Every test here is really about the failure mode of caching: showing a user
+    a monitor that is no longer plugged in, or hiding one that now is.
+    """
+
+    @pytest.fixture
+    def cache(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setattr(monitors, "_connector_fingerprint", lambda: "dp1:connected")
+        probes = {"n": 0}
+
+        def probe():
+            probes["n"] += 1
+            return [DdcutilBacklight(1, "DELL")]
+
+        monkeypatch.setattr(monitors, "_external_monitors", probe)
+        monkeypatch.setattr(monitors, "_internal_monitors", list)
+        return probes
+
+    def test_the_second_call_does_not_probe(self, cache):
+        first = monitors.list_monitors()
+        second = monitors.list_monitors()
+        assert [m.id for m in first] == [m.id for m in second] == ["ddc1"]
+        assert cache["n"] == 1, "detect should have run exactly once"
+
+    def test_plugging_a_monitor_in_invalidates_immediately(self, cache, monkeypatch):
+        """The reason this is keyed on DRM connectors and not just a timer."""
+        monitors.list_monitors()
+        assert cache["n"] == 1
+
+        monkeypatch.setattr(monitors, "_connector_fingerprint",
+                            lambda: "dp1:connected|hdmi1:connected")
+        monitors.list_monitors()
+        assert cache["n"] == 2, "a hotplug must not wait for the cache to age out"
+
+    def test_an_old_cache_is_not_trusted(self, cache, monkeypatch):
+        """Backstop for machines exposing no DRM connectors, where the
+        fingerprint is a constant empty string and can never invalidate."""
+        monitors.list_monitors()
+        # Capture the real clock first: patching time.time and then calling it
+        # inside the replacement would call the replacement.
+        later = time.time() + monitors._CACHE_MAX_AGE + 1
+        monkeypatch.setattr(monitors.time, "time", lambda: later)
+        monitors.list_monitors()
+        assert cache["n"] == 2
+
+    def test_refresh_bypasses_a_valid_cache(self, cache):
+        monitors.list_monitors()
+        monitors.list_monitors(refresh=True)
+        assert cache["n"] == 2
+
+    def test_a_corrupt_cache_falls_back_to_probing(self, cache, tmp_path):
+        monitors.list_monitors()
+        monitors._cache_path().write_text("{ this is not json", encoding="utf-8")
+        assert [m.id for m in monitors.list_monitors()] == ["ddc1"]
+        assert cache["n"] == 2, "a broken cache must never be fatal"
+
+    def test_an_unwritable_cache_dir_costs_speed_not_correctness(
+            self, cache, monkeypatch):
+        monkeypatch.setattr(monitors.Path, "mkdir",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+        assert [m.id for m in monitors.list_monitors()] == ["ddc1"]
+        assert [m.id for m in monitors.list_monitors()] == ["ddc1"]
+
+    def test_a_cached_monitor_is_rebuilt_as_the_same_backend(self, cache):
+        monitors.list_monitors()
+        restored = monitors.list_monitors()[0]
+        assert isinstance(restored, DdcutilBacklight)
+        assert restored.id == "ddc1"
+        assert "DELL" in restored.label
+
+    def test_nothing_detected_is_not_cached_as_truth(self, tmp_path, monkeypatch):
+        """An empty result usually means ddcutil failed, not that the machine
+        has no monitors — caching it would make one bad probe stick."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setattr(monitors, "_connector_fingerprint", lambda: "x")
+        monkeypatch.setattr(monitors, "_internal_monitors", list)
+        monkeypatch.setattr(monitors, "_external_monitors", list)
+        monkeypatch.setattr(monitors, "_xrandr_monitors", list)
+        assert monitors.list_monitors() == []
+        assert not monitors._cache_path().exists()
