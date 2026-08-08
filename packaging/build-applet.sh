@@ -52,6 +52,13 @@ cp "$ROOT/applet/$UUID/applet.js" \
 # repository carries one next to its icon.
 cp "$ROOT/CHANGELOG.md" "$OUT/"
 
+# Translations. Cinnamon compiles these into the locale store on install, so
+# the .po sources ship rather than compiled .mo files — which is also what
+# lets Spices' translators pick the applet up.
+if [ -d "$ROOT/applet/$UUID/po" ]; then
+    cp -r "$ROOT/applet/$UUID/po" "$OUT/po"
+fi
+
 # The engine is copied from src/ every build rather than kept as a second copy
 # in git. Two checked-in copies would drift, and the drift would only show up
 # on someone else's desktop.

@@ -208,6 +208,25 @@ ruff check .                             # rules are pinned in pyproject.toml
 node tests/applet_engine_resolution.js   # the applet's engine lookup
 ```
 
+### Translations
+
+Every string the applet shows is translatable, and the template lives at
+`applet/lumendusk@kasun/po/lumendusk@kasun.pot`. Regenerate it after changing
+any user-visible text:
+
+```bash
+cd applet/lumendusk@kasun
+cinnamon-xlet-makepot -p -o po/lumendusk@kasun.pot .   # needs python3-polib
+```
+
+Note `-j` means *skip* JavaScript, not include it. To try a translation
+locally, drop a `<lang>.po` beside the template and run the same tool with
+`-i`, which compiles and installs it into your locale store.
+
+Status lines are deliberately whole phrases (`Following fixed times · day`)
+rather than assembled from pieces — word order and separators move between
+languages, so a sentence built by concatenation cannot be translated properly.
+
 ### Building the applet bundle
 
 Cinnamon Spices installs an applet by extracting a zip and running nothing —

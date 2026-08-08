@@ -18,7 +18,18 @@ const Settings = imports.ui.settings;
 const Util = imports.misc.util;
 const GLib = imports.gi.GLib;
 const Gio = imports.gi.Gio;
+const Gettext = imports.gettext;
 const Mainloop = imports.mainloop;
+
+const UUID = "lumendusk@kasun";
+
+// Spices installs compiled catalogs under ~/.local/share/locale; a system
+// package would land in /usr/share/locale, which gettext already searches.
+Gettext.bindtextdomain(UUID, GLib.get_home_dir() + "/.local/share/locale");
+
+function _(text) {
+    return Gettext.dgettext(UUID, text);
+}
 
 // Where the engine might be, best first. install.sh builds a venv so we don't
 // touch the system Python, but that is not the only way it gets installed — a
@@ -126,7 +137,7 @@ LumenduskApplet.prototype = {
         if (metadata && metadata.path) _appletDir = metadata.path;
 
         this.set_applet_icon_symbolic_name("weather-clear-night");
-        this.set_applet_tooltip("Lumendusk — auto theme, night light & brightness");
+        this.set_applet_tooltip(_("Lumendusk — auto theme, night light & brightness"));
 
         this.menuManager = new PopupMenu.PopupMenuManager(this);
         this.menu = new Applet.AppletPopupMenu(this, orientation);
@@ -306,29 +317,29 @@ LumenduskApplet.prototype = {
         // a broken applet. Say so instead of failing silently.
         if (!this._engineInstalled()) {
             let missing = new PopupMenu.PopupMenuItem(
-                "Engine not found — run install.sh", { reactive: false });
+                _("Engine not found — run install.sh"), { reactive: false });
             this.menu.addMenuItem(missing);
             // Name the first candidate only. The full list is four paths plus
             // PATH, which is a wall of text in a panel menu and answers a
             // question nobody asked; the log has all of it if it's really
             // installed somewhere unusual.
             let hint = new PopupMenu.PopupMenuItem(
-                "Looked in " + ENGINE_CANDIDATES[0] + " and on PATH",
+                _("Looked in %s and on PATH").replace("%s", ENGINE_CANDIDATES[0]),
                 { reactive: false });
             hint.actor.set_style("font-size: 8pt;");
             this.menu.addMenuItem(hint);
-            this.set_applet_tooltip("Lumendusk — engine not installed");
+            this.set_applet_tooltip(_("Lumendusk — engine not installed"));
             return;
         }
 
         // Who is driving: Lumendusk, or the user. Radio dots rather than a
         // switch, because "Pause automation OFF" was a double negative nobody
         // should have to parse.
-        this._autoItem = keepOpen(new PopupMenu.PopupMenuItem("Automatic"));
+        this._autoItem = keepOpen(new PopupMenu.PopupMenuItem(_("Automatic")));
         this._autoItem.connect("activate", () => this._setControl("auto"));
         this.menu.addMenuItem(this._autoItem);
 
-        this._manualItem = keepOpen(new PopupMenu.PopupMenuItem("Manual"));
+        this._manualItem = keepOpen(new PopupMenu.PopupMenuItem(_("Manual")));
         this._manualItem.connect("activate", () => this._setControl("manual"));
         this.menu.addMenuItem(this._manualItem);
 
@@ -341,18 +352,18 @@ LumenduskApplet.prototype = {
         this._manualSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._manualSection);
 
-        this._lightItem = keepOpen(new PopupMenu.PopupMenuItem("Light"));
+        this._lightItem = keepOpen(new PopupMenu.PopupMenuItem(_("Light")));
         this._lightItem.connect("activate", () => this._setAppearance("light"));
         this._manualSection.addMenuItem(this._lightItem);
 
-        this._darkItem = keepOpen(new PopupMenu.PopupMenuItem("Dark"));
+        this._darkItem = keepOpen(new PopupMenu.PopupMenuItem(_("Dark")));
         this._darkItem.connect("activate", () => this._setAppearance("dark"));
         this._manualSection.addMenuItem(this._darkItem);
 
         // The live warm-tint switch, not the config key of the same name: in
         // Manual nothing schedules night light, so this is the only way to get
         // it. Colour temperature stays in Settings.
-        this._nightlightSwitch = new PopupMenu.PopupSwitchMenuItem("Night light", false);
+        this._nightlightSwitch = new PopupMenu.PopupSwitchMenuItem(_("Night light"), false);
         this._nightlightSwitch.connect("toggled", (item, value) => {
             if (this._syncingNightlight) return;
             this._runEngine("nightlight " + (value ? "on" : "off"));
@@ -368,7 +379,7 @@ LumenduskApplet.prototype = {
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         // Brightness (all monitors) slider.
-        let bLabel = new PopupMenu.PopupMenuItem("Brightness (all monitors)", { reactive: false });
+        let bLabel = new PopupMenu.PopupMenuItem(_("Brightness (all monitors)"), { reactive: false });
         this.menu.addMenuItem(bLabel);
         this._brightnessSlider = new PopupMenu.PopupSliderMenuItem(0.8);
         this._brightnessSlider.connect("value-changed", (slider, value) =>
@@ -381,17 +392,17 @@ LumenduskApplet.prototype = {
         // Hidden in Manual, where the engine would refuse anyway — a menu item
         // that does nothing is worse than one that isn't there.
         this._applyNow = new PopupMenu.PopupIconMenuItem(
-            "Apply day/night now", "view-refresh-symbolic", imports.gi.St.IconType.SYMBOLIC);
+            _("Apply day/night now"), "view-refresh-symbolic", imports.gi.St.IconType.SYMBOLIC);
         this._applyNow.connect("activate", () => this._runEngine("--once"));
         this.menu.addMenuItem(this._applyNow);
 
         let settings = new PopupMenu.PopupIconMenuItem(
-            "Settings…", "preferences-system-symbolic", imports.gi.St.IconType.SYMBOLIC);
+            _("Settings…"), "preferences-system-symbolic", imports.gi.St.IconType.SYMBOLIC);
         settings.connect("activate", () => this.configureApplet());
         this.menu.addMenuItem(settings);
 
         let configFile = new PopupMenu.PopupIconMenuItem(
-            "Open config file", "document-edit-symbolic", imports.gi.St.IconType.SYMBOLIC);
+            _("Open config file"), "document-edit-symbolic", imports.gi.St.IconType.SYMBOLIC);
         configFile.connect("activate", () => this._openConfig());
         this.menu.addMenuItem(configFile);
 
@@ -427,15 +438,28 @@ LumenduskApplet.prototype = {
         this._statusItem.actor.visible = auto;
         if (this._applyNow) this._applyNow.actor.visible = auto;
 
+        // Whole phrases rather than assembled fragments. Building
+        // "Following " + source + " · " + phase reads fine in English and is
+        // untranslatable everywhere else: word order moves, and some languages
+        // need a different separator. Four complete strings cost a translator
+        // less than three fragments they cannot see the shape of.
         if (auto) {
             let bySun = this._readMode() === "sun";
-            let source = bySun ? "sunrise and sunset" : "fixed times";
-            this._statusItem.label.text = "Following " + source + " · " +
-                (dark ? "night" : "day");
-            this.set_applet_tooltip("Lumendusk — automatic (" + source + ")");
+            if (bySun) {
+                this._statusItem.label.text = dark
+                    ? _("Following sunrise and sunset · night")
+                    : _("Following sunrise and sunset · day");
+                this.set_applet_tooltip(_("Lumendusk — automatic (sunrise and sunset)"));
+            } else {
+                this._statusItem.label.text = dark
+                    ? _("Following fixed times · night")
+                    : _("Following fixed times · day");
+                this.set_applet_tooltip(_("Lumendusk — automatic (fixed times)"));
+            }
         } else {
-            this.set_applet_tooltip("Lumendusk — manual (" +
-                                    (dark ? "dark" : "light") + ")");
+            this.set_applet_tooltip(dark
+                ? _("Lumendusk — manual (dark)")
+                : _("Lumendusk — manual (light)"));
             this._refreshNightlight();
         }
     },
