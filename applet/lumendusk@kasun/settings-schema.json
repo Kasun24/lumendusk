@@ -151,7 +151,7 @@
 
     "brightness_help": {
         "type": "label",
-        "description": "Automatic brightness is not wired into the day/night engine yet — these presets are what the applet's Day and Night buttons apply."
+        "description": "These levels are applied at each day/night transition, alongside the theme and night light. External monitors need ddcutil and DDC/CI; a monitor that doesn't respond is skipped and the rest still change."
     },
 
     "brightness_enabled": {

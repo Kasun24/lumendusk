@@ -31,6 +31,9 @@ macOS (menu-bar extra).
   on/off.
 - A brightness read/set/list tool across sysfs/brightnessctl, ddcutil, and
   xrandr backends (Step B1).
+- **Brightness on day/night transitions** (Step B3) — day and night levels
+  applied alongside the theme. Off by default: turn on "Change brightness with
+  the time of day" in the settings panel.
 - A Cinnamon **panel applet**: the mode switch, Light/Dark and a night light
   toggle in Manual, and a brightness slider.
 - A **settings panel** (right-click → Configure) for mode, location, times,
@@ -38,7 +41,9 @@ macOS (menu-bar extra).
   detection from your system timezone.
 - A background daemon that **autostarts on login**.
 
-Next: brightness on day/night transitions (Step B3).
+Next: a full 24 h cycle test with brightness enabled, including a suspend
+across a transition (Phase 2), then the optional smooth fade around
+transitions.
 
 ## How it works
 
