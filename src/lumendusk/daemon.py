@@ -73,8 +73,10 @@ def apply_phase(phase: Phase, cfg: config_mod.Config,
     if cfg.brightness_enabled:
         level = cfg.brightness_night if dark else cfg.brightness_day
         try:
+            # No log line here: set_brightness reports what it actually applied,
+            # per monitor. This used to log the level we asked for regardless of
+            # whether any backend accepted it.
             brightness_mod.set_brightness(level, "all")
-            log.info("brightness → %s%%", level)
         except Exception:
             log.exception("failed to set brightness.")
 

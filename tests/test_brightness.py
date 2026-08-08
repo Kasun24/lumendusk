@@ -5,10 +5,12 @@ No real monitors are touched — subprocess output is faked.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 
 import pytest
 
+from lumendusk import brightness as brightness_mod
 from lumendusk.brightness import backends
 from lumendusk.brightness.backends import (
     BacklightError,
@@ -127,3 +129,90 @@ class TestSelect:
         mons = [XrandrBacklight("HDMI-1")]
         with pytest.raises(BacklightError, match="HDMI-1"):
             select(mons, "nope")
+
+
+class FakeMonitor:
+    """A monitor that either accepts a write or refuses it."""
+
+    def __init__(self, mid, fails=False):
+        self.id = mid
+        self.fails = fails
+        self.written = None
+
+    def set(self, percent):
+        if self.fails:
+            raise BacklightError("ddcutil setvcp failed")
+        self.written = percent
+
+
+class TestSetBrightnessLogging:
+    """What set_brightness reports must match what actually happened.
+
+    Brightness used to be the one subsystem that could change silently: the
+    applet's slider writes through the CLI, and only the daemon logged, so a
+    change made from the panel left no trace. Worse, the daemon logged the
+    level it *asked* for whether or not any backend accepted it — a success
+    line over a total failure is how a broken ddcutil setup stays hidden.
+    """
+
+    @pytest.fixture
+    def monitors(self, monkeypatch):
+        def install(*mons):
+            monkeypatch.setattr(brightness_mod, "list_monitors",
+                                lambda: list(mons))
+            return mons
+        return install
+
+    @pytest.fixture
+    def logged(self):
+        """Collect Lumendusk's own log messages.
+
+        Not pytest's ``caplog``: log.py sets ``propagate = False``, so records
+        never reach the root logger caplog listens on. Attaching to the
+        project logger is the only way to see them.
+        """
+        messages: list[str] = []
+
+        class Collect(logging.Handler):
+            def emit(self, record):
+                messages.append(record.getMessage())
+
+        logger = logging.getLogger("lumendusk")
+        handler = Collect()
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        try:
+            yield messages
+        finally:
+            logger.removeHandler(handler)
+
+    def test_success_names_the_monitors_it_set(self, monitors, logged):
+        a, b = monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2"))
+        applied = brightness_mod.set_brightness(20)
+        assert applied == [("ddc1", 20), ("ddc2", 20)]
+        assert (a.written, b.written) == (20, 20)
+        assert "brightness \u2192 20% on ddc1, ddc2." in "\n".join(logged)
+
+    def test_a_partial_failure_says_which_one(self, monitors, logged):
+        monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        applied = brightness_mod.set_brightness(45)
+        assert [mid for mid, _ in applied] == ["ddc1"]
+        assert "brightness \u2192 45% on ddc1 (ddc2 failed)." in "\n".join(logged)
+
+    def test_a_total_failure_is_not_reported_as_success(self, monitors, logged):
+        """The regression that matters: no cheerful line over a dead write."""
+        monitors(FakeMonitor("ddc1", fails=True), FakeMonitor("ddc2", fails=True))
+        assert brightness_mod.set_brightness(45) == []
+        text = "\n".join(logged)
+        assert "failed on every monitor (ddc1, ddc2)" in text
+        assert "brightness \u2192 45% on" not in text
+
+    def test_no_monitors_is_said_out_loud(self, monitors, logged):
+        monitors()
+        assert brightness_mod.set_brightness(45) == []
+        assert "no monitors matched 'all'" in "\n".join(logged)
+
+    def test_the_level_is_clamped_in_the_log_too(self, monitors, logged):
+        monitors(FakeMonitor("ddc1"))
+        brightness_mod.set_brightness(250)
+        assert "brightness \u2192 100% on ddc1." in "\n".join(logged)
