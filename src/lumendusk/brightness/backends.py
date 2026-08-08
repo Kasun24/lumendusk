@@ -9,9 +9,19 @@ Three kinds, in order of preference:
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
+
+from .. import log
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows, where Phase 3 will differ
+    fcntl = None  # type: ignore[assignment]
 
 
 class BacklightError(RuntimeError):
@@ -32,6 +42,73 @@ class BacklightError(RuntimeError):
 _TIMEOUT = 10
 
 
+def cache_dir() -> Path:
+    """Where Lumendusk keeps disposable state (the DDC lock, the monitor cache)."""
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return Path(base) / "lumendusk"
+
+
+# How long to queue behind another ddcutil call before giving up on the lock.
+# A single operation is bounded by _TIMEOUT above, so 20 s covers a full queue
+# with room to spare; past that, something is wedged rather than busy.
+_LOCK_WAIT = 20.0
+
+
+@contextlib.contextmanager
+def ddc_lock():
+    """Serialise ddcutil across every Lumendusk process.
+
+    DDC/CI is a bus, not a set of independent devices, and ddcutil does not
+    tolerate being run against two displays at once: measured on this hardware,
+    concurrent `getvcp` calls failed roughly one run in five with "Display not
+    found", while the same calls in sequence never failed. Concurrency also
+    made it *slower* — there is no parallelism to win here, only contention.
+
+    Nothing in one process is enough, because the callers are separate
+    processes: the daemon applies a preset at a transition while the applet,
+    which shells out to the CLI, may be reading the same monitors to draw its
+    slider. A file lock is the only thing both can see.
+
+    Failing to take the lock is never fatal. A read-only cache directory, a
+    platform without fcntl, or a wedged holder all fall through to running
+    unlocked — which is exactly today's behaviour, so the worst case is no
+    worse than before.
+    """
+    if fcntl is None:
+        yield
+        return
+
+    handle = None
+    try:
+        path = cache_dir() / "ddc.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "w")
+    except OSError:
+        yield
+        return
+
+    held = False
+    deadline = time.monotonic() + _LOCK_WAIT
+    try:
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    log.warning(
+                        "waited %ss for the ddcutil lock; proceeding without it.",
+                        int(_LOCK_WAIT))
+                    break
+                time.sleep(0.05)
+        yield
+    finally:
+        if held:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
 def _run(argv: list[str], what: str) -> subprocess.CompletedProcess[str]:
     """Run a backend command, converting every failure into BacklightError.
 
@@ -48,6 +125,12 @@ def _run(argv: list[str], what: str) -> subprocess.CompletedProcess[str]:
         raise BacklightError((exc.stderr or "").strip() or f"{what} failed") from exc
     except OSError as exc:
         raise BacklightError(f"{what}: {exc}") from exc
+
+
+def _run_ddc(argv: list[str], what: str) -> subprocess.CompletedProcess[str]:
+    """Run a ddcutil command with the bus to itself. See :func:`ddc_lock`."""
+    with ddc_lock():
+        return _run(argv, what)
 
 
 class Backlight:
@@ -116,7 +199,7 @@ class DdcutilBacklight(Backlight):
         self._display = str(display)
 
     def get(self) -> int:
-        out = _run(
+        out = _run_ddc(
             ["ddcutil", "--display", self._display, "--brief", "getvcp", "10"],
             "ddcutil getvcp",
         ).stdout
@@ -129,8 +212,8 @@ class DdcutilBacklight(Backlight):
 
     def set(self, percent: int) -> None:
         percent = self._clamp(percent)
-        _run(["ddcutil", "--display", self._display, "setvcp", "10", str(percent)],
-             "ddcutil setvcp")
+        _run_ddc(["ddcutil", "--display", self._display, "setvcp", "10", str(percent)],
+                 "ddcutil setvcp")
 
 
 class XrandrBacklight(Backlight):

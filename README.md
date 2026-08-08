@@ -185,8 +185,13 @@ Monitor detection is cached in `~/.cache/lumendusk/monitors.json`, because
 `ddcutil detect` costs about half a second and every brightness change pays
 it. The cache is keyed on which displays the kernel reports as connected, so
 plugging one in invalidates it at once. `lumendusk brightness list` always
-probes for real — use it if a monitor seems to be missing. The cache is safe
-to delete at any time.
+probes for real — use it if a monitor seems to be missing.
+
+Alongside it, `~/.cache/lumendusk/ddc.lock` keeps two ddcutil calls from
+running at once. DDC/CI is a shared bus, and overlapping calls fail with
+`Display not found` or `maximum retries exceeded` rather than queueing — so
+the daemon applying a preset while the panel menu reads the same monitors
+would otherwise lose one of them. Both files are safe to delete at any time.
 
 ## Development
 

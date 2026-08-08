@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import threading
 import time
 
 import pytest
@@ -356,3 +357,89 @@ class TestDiscoveryCache:
         monkeypatch.setattr(monitors, "_xrandr_monitors", list)
         assert monitors.list_monitors() == []
         assert not monitors._cache_path().exists()
+
+
+class TestDdcLock:
+    """ddcutil must never run twice at once, across processes.
+
+    DDC/CI is a bus, not independent devices. Measured on real hardware,
+    concurrent getvcp calls failed about one run in five with "Display not
+    found" — and were slower than running them in sequence. The callers are
+    separate processes (the daemon at a transition, the applet shelling out to
+    draw its slider), so only a file lock can see both.
+    """
+
+    @pytest.fixture
+    def lockdir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        return tmp_path
+
+    def test_it_serialises_concurrent_holders(self, lockdir):
+        """Two threads, and the second must not enter while the first holds it."""
+        overlaps = []
+        inside = []
+
+        def worker():
+            with backends.ddc_lock():
+                inside.append(1)
+                overlaps.append(len(inside))
+                time.sleep(0.05)
+                inside.pop()
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert overlaps == [1, 1, 1, 1], f"overlapping ddcutil calls: {overlaps}"
+
+    def test_the_lock_is_released_when_the_body_raises(self, lockdir):
+        """A failed ddcutil must not leave the bus locked for everyone else."""
+        with pytest.raises(BacklightError), backends.ddc_lock():
+            raise BacklightError("ddcutil setvcp failed")
+
+        acquired = []
+        with backends.ddc_lock():
+            acquired.append(True)
+        assert acquired == [True]
+
+    def test_an_unwritable_cache_dir_still_runs(self, monkeypatch, tmp_path):
+        """Degrade to today's behaviour rather than refusing to set brightness."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setattr(backends.Path, "mkdir",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+        ran = []
+        with backends.ddc_lock():
+            ran.append(True)
+        assert ran == [True]
+
+    def test_a_platform_without_fcntl_still_runs(self, monkeypatch, lockdir):
+        """Windows (Phase 3) has no flock; brightness must not depend on it."""
+        monkeypatch.setattr(backends, "fcntl", None)
+        ran = []
+        with backends.ddc_lock():
+            ran.append(True)
+        assert ran == [True]
+
+    def test_a_wedged_holder_does_not_block_forever(self, monkeypatch, lockdir):
+        """Bounded wait: past the deadline, warn and proceed unlocked.
+
+        Better a possible collision than a daemon that stops applying
+        brightness because some other process died holding the lock.
+        """
+        monkeypatch.setattr(backends, "_LOCK_WAIT", 0.1)
+        backends.cache_dir().mkdir(parents=True, exist_ok=True)
+        blocker = open(backends.cache_dir() / "ddc.lock", "w")
+        fcntl_mod = backends.fcntl
+        fcntl_mod.flock(blocker, fcntl_mod.LOCK_EX)
+        try:
+            ran = []
+            started = time.monotonic()
+            with backends.ddc_lock():
+                ran.append(True)
+            assert ran == [True]
+            assert time.monotonic() - started < 5, "should give up quickly"
+        finally:
+            fcntl_mod.flock(blocker, fcntl_mod.LOCK_UN)
+            blocker.close()

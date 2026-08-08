@@ -9,7 +9,6 @@ Detection order:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import time
@@ -21,6 +20,8 @@ from .backends import (
     DdcutilBacklight,
     SysfsBacklight,
     XrandrBacklight,
+    cache_dir,
+    ddc_lock,
 )
 
 _SYS_BACKLIGHT = Path("/sys/class/backlight")
@@ -42,12 +43,15 @@ def _external_monitors() -> list[Backlight]:
     if not shutil.which("ddcutil"):
         return []
     try:
-        # Longer than the per-monitor limit in backends.py: detect probes every
-        # I²C bus on the machine, so it is legitimately slower than a read.
-        out = subprocess.run(
-            ["ddcutil", "detect", "--brief"],
-            check=True, capture_output=True, text=True, timeout=15,
-        ).stdout
+        # Under the same lock as getvcp/setvcp: detect walks every I²C bus, so
+        # it is the call most likely to collide with a read on another process.
+        # Longer timeout than a per-monitor call for the same reason — probing
+        # every bus is legitimately slower than reading one display.
+        with ddc_lock():
+            out = subprocess.run(
+                ["ddcutil", "detect", "--brief"],
+                check=True, capture_output=True, text=True, timeout=15,
+            ).stdout
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return []
     mons: list[Backlight] = []
@@ -120,8 +124,7 @@ def _connector_fingerprint() -> str:
 
 
 def _cache_path() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    return Path(base) / "lumendusk" / "monitors.json"
+    return cache_dir() / "monitors.json"
 
 
 def _to_spec(mon: Backlight) -> dict | None:
