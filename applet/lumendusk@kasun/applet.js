@@ -36,24 +36,51 @@ const ENGINE_CANDIDATES = [
     "/usr/bin/lumendusk",
 ];
 
-let _enginePath = null;
+// The applet's own directory, from metadata.path. Set on init, because the
+// engine may be bundled inside it (see below).
+let _appletDir = null;
+let _engineArgv = null;
 
-function findEngine() {
+function findEngineArgv() {
+    // Returns the command to run the engine as an argv array, or null if there
+    // isn't one. An array rather than a path because the bundled copy is run as
+    // `python3 <dir>/engine/run.py`, not as an executable of its own.
+    //
     // Cached once found, re-checked while missing: installing the engine with
     // the applet already sitting in the panel should start working on the next
     // menu open, not require a Cinnamon restart. A path that has resolved can't
     // move without a reinstall, so caching that direction is safe.
-    if (_enginePath !== null) return _enginePath;
+    if (_engineArgv !== null) return _engineArgv;
 
     for (let i = 0; i < ENGINE_CANDIDATES.length; i++) {
         if (GLib.file_test(ENGINE_CANDIDATES[i], GLib.FileTest.IS_EXECUTABLE)) {
-            _enginePath = ENGINE_CANDIDATES[i];
-            return _enginePath;
+            _engineArgv = [ENGINE_CANDIDATES[i]];
+            return _engineArgv;
         }
     }
-    // May be null — callers treat that as "not installed".
-    _enginePath = GLib.find_program_in_path("lumendusk");
-    return _enginePath;
+
+    let onPath = GLib.find_program_in_path("lumendusk");
+    if (onPath) {
+        _engineArgv = [onPath];
+        return _engineArgv;
+    }
+
+    // Last resort: the copy bundled inside the applet directory. Installing
+    // from Cinnamon Spices extracts a zip and runs nothing — no venv, no pip —
+    // so for a Spices user this is the only engine on the machine.
+    //
+    // It goes last so that a real install still wins. Someone with a dev
+    // checkout or a pip install wants their edits to take effect, not a frozen
+    // copy shipped inside the applet.
+    if (_appletDir) {
+        let bundled = _appletDir + "/engine/run.py";
+        let python = GLib.find_program_in_path("python3");
+        if (python && GLib.file_test(bundled, GLib.FileTest.EXISTS)) {
+            _engineArgv = [python, bundled];
+            return _engineArgv;
+        }
+    }
+    return null;
 }
 
 // Settings we mirror into config.toml. Names match the engine's config keys
@@ -64,6 +91,24 @@ const SYNCED_KEYS = [
     "brightness_enabled", "brightness_day", "brightness_night",
 ];
 
+function keepOpen(item) {
+    // Cinnamon closes the menu whenever a menu item is activated — popupMenu.js
+    // hands `keepMenu = false` to activate() on button release. That's right for
+    // an item that does its one thing and is finished (Settings, Open config
+    // file), and wrong for the items this wraps, which the menu is also
+    // *showing the state of*: clicking Manual is what reveals Light/Dark, so
+    // closing at that moment hides the controls the click just unlocked, and
+    // choosing an appearance gives you no chance to see the dot move or change
+    // your mind.
+    //
+    // PopupSwitchMenuItem already opts out this way (which is why the night
+    // light switch behaves); this gives plain items the same treatment.
+    item.activate = function (event) {
+        PopupMenu.PopupBaseMenuItem.prototype.activate.call(this, event, true);
+    };
+    return item;
+}
+
 function LumenduskApplet(metadata, orientation, panelHeight, instanceId) {
     this._init(metadata, orientation, panelHeight, instanceId);
 }
@@ -73,6 +118,12 @@ LumenduskApplet.prototype = {
 
     _init: function (metadata, orientation, panelHeight, instanceId) {
         Applet.IconApplet.prototype._init.call(this, orientation, panelHeight, instanceId);
+
+        // Where this applet was installed. Cinnamon sets meta.path to the
+        // applet's own directory, which is how the bundled engine is located
+        // (see findEngineArgv) — the same trick printers@cinnamon.org uses to
+        // reach its Python helpers.
+        if (metadata && metadata.path) _appletDir = metadata.path;
 
         this.set_applet_icon_symbolic_name("weather-clear-night");
         this.set_applet_tooltip("Lumendusk — auto theme, night light & brightness");
@@ -273,11 +324,11 @@ LumenduskApplet.prototype = {
         // Who is driving: Lumendusk, or the user. Radio dots rather than a
         // switch, because "Pause automation OFF" was a double negative nobody
         // should have to parse.
-        this._autoItem = new PopupMenu.PopupMenuItem("Automatic");
+        this._autoItem = keepOpen(new PopupMenu.PopupMenuItem("Automatic"));
         this._autoItem.connect("activate", () => this._setControl("auto"));
         this.menu.addMenuItem(this._autoItem);
 
-        this._manualItem = new PopupMenu.PopupMenuItem("Manual");
+        this._manualItem = keepOpen(new PopupMenu.PopupMenuItem("Manual"));
         this._manualItem.connect("activate", () => this._setControl("manual"));
         this.menu.addMenuItem(this._manualItem);
 
@@ -290,11 +341,11 @@ LumenduskApplet.prototype = {
         this._manualSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._manualSection);
 
-        this._lightItem = new PopupMenu.PopupMenuItem("Light");
+        this._lightItem = keepOpen(new PopupMenu.PopupMenuItem("Light"));
         this._lightItem.connect("activate", () => this._setAppearance("light"));
         this._manualSection.addMenuItem(this._lightItem);
 
-        this._darkItem = new PopupMenu.PopupMenuItem("Dark");
+        this._darkItem = keepOpen(new PopupMenu.PopupMenuItem("Dark"));
         this._darkItem.connect("activate", () => this._setAppearance("dark"));
         this._manualSection.addMenuItem(this._darkItem);
 
@@ -440,14 +491,14 @@ LumenduskApplet.prototype = {
         // Runs the engine off the compositor thread and hands stdout back.
         // stdout is null when it couldn't run or exited non-zero; stderr comes
         // along so callers can report why. Never blocks the panel.
-        let engine = findEngine();
-        if (engine === null) {
+        let base = findEngineArgv();
+        if (base === null) {
             callback(null, "engine not installed");
             return;
         }
         try {
             let proc = new Gio.Subprocess({
-                argv: [engine].concat(argv),
+                argv: base.concat(argv),
                 flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             });
             proc.init(null);
@@ -473,18 +524,20 @@ LumenduskApplet.prototype = {
     },
 
     _engineInstalled: function () {
-        return findEngine() !== null;
+        return findEngineArgv() !== null;
     },
 
     _runEngine: function (args) {
-        let engine = findEngine();
-        if (engine === null) {
+        let base = findEngineArgv();
+        if (base === null) {
             global.logError("Lumendusk: engine not found (looked in " +
-                            ENGINE_CANDIDATES.join(", ") + " and on PATH)" +
-                            " — run install.sh from the repo.");
+                            ENGINE_CANDIDATES.join(", ") + ", on PATH, and in " +
+                            (_appletDir || "the applet directory") +
+                            "/engine) — run install.sh from the repo.");
             return;
         }
-        Util.spawnCommandLine(GLib.shell_quote(engine) + " " + args);
+        let quoted = base.map((part) => GLib.shell_quote(part)).join(" ");
+        Util.spawnCommandLine(quoted + " " + args);
     },
 
     _readConfigText: function () {

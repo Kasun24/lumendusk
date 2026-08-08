@@ -89,6 +89,18 @@ def _get(schema: str, key: str) -> str | None:
         return None
 
 
+def _is_current(schema: str, key: str, value: str) -> bool:
+    """Does this key already hold ``value``?
+
+    Used to skip writes that would change nothing. dconf notifies listeners on
+    every write, identical value or not, so re-setting a key Cinnamon is
+    watching makes it reload the theme for no reason. A read that fails returns
+    None, which compares unequal — so the uncertain case writes, and the
+    optimisation can only ever be skipped, never wrongly applied.
+    """
+    return _get(schema, key) == value
+
+
 def _set(schema: str, key: str, value: str) -> bool:
     # Silently skip schemas that don't exist on this machine (e.g. the XApp
     # portal on non-Mint systems) rather than erroring.
@@ -210,31 +222,65 @@ def variant_for(catalog: list[Variant], family: str, accent: str,
 
 
 # ---- apply ------------------------------------------------------------------
-def apply_variant(v: Variant) -> bool:
+def _targets(v: Variant) -> list[tuple[str, str, str]]:
+    """Every (schema, key, value) this variant wants set."""
     scheme = "prefer-dark" if v.mode == "dark" else "prefer-light"
-    ok = True
-    for schema, key in _KEYS_THEME:
-        ok &= _set(schema, key, v.themes)
-    ok &= _set(*_KEY_SHELL, v.cinnamon)
-    for schema, key in _KEYS_ICON:
-        ok &= _set(schema, key, v.icons)
+    out = [(s, k, v.themes) for s, k in _KEYS_THEME]
+    out.append((*_KEY_SHELL, v.cinnamon))
+    out += [(s, k, v.icons) for s, k in _KEYS_ICON]
     if v.cursor:
-        for schema, key in _KEYS_CURSOR:
-            ok &= _set(schema, key, v.cursor)
-    for schema, key in _KEYS_SCHEME:
-        ok &= _set(schema, key, scheme)
+        out += [(s, k, v.cursor) for s, k in _KEYS_CURSOR]
+    out += [(s, k, scheme) for s, k in _KEYS_SCHEME]
     if v.color:
-        ok &= _set(*_KEY_ACCENT, v.color)
-    log.info("appearance → %s [%s/%s]: themes=%s, shell=%s, icons=%s, scheme=%s",
-             v.mode, v.family, v.accent, v.themes, v.cinnamon, v.icons, scheme)
+        out.append((*_KEY_ACCENT, v.color))
+    return out
+
+
+def apply_variant(v: Variant, force: bool = False) -> bool:
+    """Set every appearance key for ``v``, skipping the ones already correct.
+
+    Skipping matters because applying is not always a change: the daemon snaps
+    to the current phase when it starts, when you switch back to automatic, and
+    after a resume, and most of those find the desktop already correct. Writing
+    the same twelve keys anyway made Cinnamon reload its theme — a visible
+    flicker in return for nothing.
+
+    Per key, not all-or-nothing: if something else moved one key (a stray
+    gsettings edit, an app changing the icon theme), that one is still put back
+    while its eleven correct neighbours are left alone.
+
+    ``force`` writes everything regardless. That is for the explicit "apply
+    now" — the button you press *because* the desktop looks wrong, where a
+    rewrite of already-correct keys is the point rather than the waste.
+    """
+    targets = _targets(v)
+    stale = targets if force else [
+        t for t in targets if not _is_current(t[0], t[1], t[2])
+    ]
+    scheme = "prefer-dark" if v.mode == "dark" else "prefer-light"
+
+    if not stale:
+        log.info("appearance already %s [%s/%s]; nothing to change.",
+                 v.mode, v.family, v.accent)
+        return True
+
+    ok = True
+    for schema, key, value in stale:
+        ok &= _set(schema, key, value)
+    log.info("appearance → %s [%s/%s]: themes=%s, shell=%s, icons=%s, scheme=%s%s",
+             v.mode, v.family, v.accent, v.themes, v.cinnamon, v.icons, scheme,
+             "" if len(stale) == len(targets)
+             else f" ({len(stale)} of {len(targets)} keys were stale)")
     return ok
 
 
-def set_mode(mode: str, accent: str | None = None) -> bool:
+def set_mode(mode: str, accent: str | None = None, force: bool = False) -> bool:
     """Switch the whole desktop to 'light' or 'dark'.
 
     ``accent`` None/"" keeps the current accent (auto-detected); otherwise it
     forces a specific accent name (e.g. "yaru", "orange", "aqua").
+    ``force`` rewrites keys that already hold the right value — see
+    :func:`apply_variant`.
     """
     catalog = _load_catalog()
     if not catalog:
@@ -253,7 +299,7 @@ def set_mode(mode: str, accent: str | None = None) -> bool:
     if target is None:
         log.error("no '%s' variant for %s/%s.", mode, family, use_accent)
         return False
-    return apply_variant(target)
+    return apply_variant(target, force=force)
 
 
 def current_mode() -> str:

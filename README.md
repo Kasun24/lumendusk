@@ -181,7 +181,28 @@ Lumendusk keeps running on the last good settings rather than exiting.
 ```bash
 pip install -e '.[sun,dev]'
 pytest
+node tests/applet_engine_resolution.js   # the applet's engine lookup
 ```
+
+### Building the applet bundle
+
+Cinnamon Spices installs an applet by extracting a zip and running nothing —
+no venv, no pip, no network. So the shipped applet carries the engine and its
+pure-Python dependencies inside it:
+
+```bash
+./packaging/build-applet.sh     # → dist/lumendusk@kasun.zip
+```
+
+The engine is copied from `src/` on every build rather than kept as a second
+copy in git, and `astral` is trimmed to the modules the engine actually
+imports (computed from the source, so it can't go stale). The script then runs
+the result in an empty environment to prove it works without anything
+installed.
+
+The applet prefers a real install over the bundled copy, so a dev checkout or
+`pip install` still wins and your edits take effect. The bundle is the floor,
+not the ceiling.
 
 ## Roadmap
 

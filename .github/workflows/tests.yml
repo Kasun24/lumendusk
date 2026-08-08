@@ -29,14 +29,35 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-  applet-syntax:
+  applet:
     # The applet is JavaScript run by Cinnamon's GJS, so the Python tests can't
     # see it. A syntax check at least stops a typo reaching someone's panel,
     # where the only symptom is an applet that silently fails to load.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install node
+        run: sudo apt-get update && sudo apt-get install -y nodejs
       - name: Check applet syntax
+        run: node --check applet/lumendusk@kasun/applet.js
+      - name: Check the engine lookup
+        run: node tests/applet_engine_resolution.js
+
+  bundle:
+    # The applet bundle is what Cinnamon Spices installs: a zip extracted with
+    # no installer run, so the engine and its dependencies have to work off a
+    # bare python3. Build it and prove it runs in an empty environment — the
+    # failure this catches is an applet that installs cleanly and then does
+    # nothing at all on someone else's machine.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the bundle
+        run: ./packaging/build-applet.sh
+      - name: Run the bundled engine with nothing installed
         run: |
-          sudo apt-get update && sudo apt-get install -y nodejs
-          node --check applet/lumendusk@kasun/applet.js
+          env -i PATH=/usr/bin:/bin HOME="$(mktemp -d)" \
+            python3 dist/lumendusk@kasun/engine/run.py status

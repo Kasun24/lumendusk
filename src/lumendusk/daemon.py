@@ -9,6 +9,10 @@ Key behaviours from the plan:
 * **Suspend/resume safety** — every tick re-evaluates the phase, so if the clock
   jumped across a transition while asleep, the change is caught on the next tick
   rather than waiting a full period. Large wall-clock jumps are logged.
+* **Applying is reconciliation** — the backends skip settings that already hold
+  the right value, so the applies that find nothing to do (startup, resume,
+  switching back to automatic) cost a few reads instead of a theme reload. The
+  explicit "apply now" passes ``force`` to rewrite regardless.
 * **Cheap** — sleeps ``interval`` seconds between ticks; near-zero CPU otherwise.
 * **Unkillable by config** — a bad config or a failing backend logs and is
   retried next tick. The loop is the one thing that must not stop; it is often
@@ -37,11 +41,18 @@ def current_phase(cfg: config_mod.Config, now: datetime | None = None) -> Phase:
     return Phase.NIGHT if is_night(cfg, now) else Phase.DAY
 
 
-def apply_phase(phase: Phase, cfg: config_mod.Config) -> None:
+def apply_phase(phase: Phase, cfg: config_mod.Config,
+                force: bool = False) -> None:
     """Apply theme, night light, and brightness for the given phase.
 
     Each step is independent: a backend that fails (no ddcutil permissions, a
     missing gsettings schema) is logged and the rest still run.
+
+    By default the backends skip settings that already hold the right value,
+    because most calls here are reconciliation rather than change — startup,
+    resume, and switching back to automatic all apply a phase the desktop is
+    usually already in. ``force`` rewrites regardless, for the explicit
+    "apply day/night now".
     """
     if not cfg.is_auto():
         log.info("manual mode; leaving the desktop as the user set it.")
@@ -49,13 +60,13 @@ def apply_phase(phase: Phase, cfg: config_mod.Config) -> None:
     dark = phase is Phase.NIGHT
 
     try:
-        set_theme(dark, cfg)
+        set_theme(dark, cfg, force=force)
     except Exception:
         log.exception("failed to apply the %s theme.", phase.value)
 
     if cfg.nightlight_enabled:
         try:
-            set_nightlight(dark, cfg.nightlight_temperature)
+            set_nightlight(dark, cfg.nightlight_temperature, force=force)
         except Exception:
             log.exception("failed to set night light.")
 
@@ -69,11 +80,17 @@ def apply_phase(phase: Phase, cfg: config_mod.Config) -> None:
 
 
 def run_once() -> int:
-    """Evaluate the current phase and apply it, then return. Used by ``--once``."""
+    """Evaluate the current phase and apply it, then return. Used by ``--once``.
+
+    Forced: this is the applet's "Apply day/night now" and the CLI's ``--once``,
+    which someone reaches for *because* the desktop looks wrong. Skipping keys
+    that already read correct is exactly the wrong behaviour for a repair
+    button — the value may be right while the desktop isn't.
+    """
     cfg = config_mod.load()
     phase = current_phase(cfg)
     log.info("phase now: %s", phase.value)
-    apply_phase(phase, cfg)
+    apply_phase(phase, cfg, force=True)
     return 0
 
 

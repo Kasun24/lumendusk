@@ -18,12 +18,23 @@ from lumendusk.config import Config
 
 @pytest.fixture
 def applied(monkeypatch):
-    """Record every desktop-touching call the engine makes."""
-    calls = {"theme": [], "nightlight": [], "brightness": []}
-    monkeypatch.setattr(daemon_mod, "set_theme",
-                        lambda dark, cfg: calls["theme"].append(dark))
-    monkeypatch.setattr(daemon_mod, "set_nightlight",
-                        lambda dark, temp=None: calls["nightlight"].append(dark))
+    """Record every desktop-touching call the engine makes.
+
+    ``forced`` collects the ``force`` flag each apply was given, which is what
+    separates a reconciliation pass (skip settings already correct) from the
+    explicit "apply now" (rewrite regardless).
+    """
+    calls = {"theme": [], "nightlight": [], "brightness": [], "forced": []}
+
+    def theme(dark, cfg, force=False):
+        calls["theme"].append(dark)
+        calls["forced"].append(force)
+
+    def nightlight(dark, temp=None, force=False):
+        calls["nightlight"].append(dark)
+
+    monkeypatch.setattr(daemon_mod, "set_theme", theme)
+    monkeypatch.setattr(daemon_mod, "set_nightlight", nightlight)
     monkeypatch.setattr(daemon_mod.brightness_mod, "set_brightness",
                         lambda level, target: calls["brightness"].append(level))
     return calls
@@ -42,12 +53,29 @@ class TestApplyPhase:
         cfg = Config(control="manual", nightlight_enabled=True,
                      brightness_enabled=True)
         daemon_mod.apply_phase(daemon_mod.Phase.NIGHT, cfg)
-        assert applied == {"theme": [], "nightlight": [], "brightness": []}
+        assert applied["theme"] == []
+        assert applied["nightlight"] == []
+        assert applied["brightness"] == []
 
     def test_run_once_respects_manual(self, applied):
         config_mod.save(Config(control="manual"))
         assert daemon_mod.run_once() == 0
         assert applied["theme"] == []
+
+    def test_a_scheduled_apply_does_not_force(self, applied):
+        """The daemon reconciles; it must not rewrite what is already right."""
+        daemon_mod.apply_phase(daemon_mod.Phase.NIGHT, Config(control="auto"))
+        assert applied["forced"] == [False]
+
+    def test_apply_now_forces(self, applied):
+        """`--once` is the repair button: it rewrites even correct-looking keys.
+
+        Someone reaches for it *because* the desktop looks wrong, and the case
+        it has to fix is a setting that reads correct while the desktop isn't.
+        """
+        config_mod.save(Config(control="auto"))
+        assert daemon_mod.run_once() == 0
+        assert applied["forced"] == [True]
 
 
 class TestCliSwitching:
