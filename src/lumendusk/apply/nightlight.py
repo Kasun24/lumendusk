@@ -13,6 +13,10 @@ from .. import log
 
 _SCHEMA = "org.cinnamon.settings-daemon.plugins.color"
 
+# See appearance.py: gsettings can hang on a wedged dconf rather than fail, and
+# the daemon has one thread to lose.
+_TIMEOUT = 5
+
 
 def _gsettings_set(schema: str, key: str, value: str) -> bool:
     if not shutil.which("gsettings"):
@@ -23,9 +27,12 @@ def _gsettings_set(schema: str, key: str, value: str) -> bool:
             check=True,
             capture_output=True,
             text=True,
+            timeout=_TIMEOUT,
         )
         return True
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        # False sends the caller to the gammastep/xsct fallback, which is the
+        # right move whether Cinnamon's keys are missing or simply not answering.
         return False
 
 
@@ -35,10 +42,10 @@ def _gsettings_get(schema: str, key: str) -> str | None:
     try:
         out = subprocess.run(
             ["gsettings", "get", schema, key],
-            check=True, capture_output=True, text=True,
+            check=True, capture_output=True, text=True, timeout=_TIMEOUT,
         )
         return out.stdout.strip().strip("'")
-    except (subprocess.CalledProcessError, OSError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return None
 
 

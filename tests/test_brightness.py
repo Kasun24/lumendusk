@@ -216,3 +216,53 @@ class TestSetBrightnessLogging:
         monitors(FakeMonitor("ddc1"))
         brightness_mod.set_brightness(250)
         assert "brightness \u2192 100% on ddc1." in "\n".join(logged)
+
+
+class TestHangingCommands:
+    """A backend that hangs must not take the daemon with it.
+
+    This is the failure the timeouts exist for, and it is the quietest one in
+    the project: ddcutil waiting on a monitor that is asleep or on another
+    input never raises, so a daemon stuck there keeps its process alive, logs
+    nothing further, and looks exactly like a healthy idle daemon. The next
+    transition simply never happens.
+    """
+
+    @staticmethod
+    def _hang(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="ddcutil", timeout=10)
+
+    def test_a_hung_read_becomes_a_backlight_error(self, monkeypatch):
+        monkeypatch.setattr(backends.subprocess, "run", self._hang)
+        with pytest.raises(BacklightError, match="timed out"):
+            DdcutilBacklight(1).get()
+
+    def test_a_hung_write_becomes_a_backlight_error(self, monkeypatch):
+        monkeypatch.setattr(backends.subprocess, "run", self._hang)
+        with pytest.raises(BacklightError, match="timed out"):
+            DdcutilBacklight(1).set(50)
+
+    def test_one_hung_monitor_does_not_block_the_others(self, monkeypatch):
+        """The point of per-monitor errors: ddc2 wedging must not cost ddc1."""
+        good = FakeMonitor("ddc1")
+
+        class Hangs:
+            id = "ddc2"
+
+            def set(self, percent):
+                raise BacklightError("ddcutil setvcp timed out after 10s")
+
+        monkeypatch.setattr(brightness_mod, "list_monitors",
+                            lambda: [good, Hangs()])
+        applied = brightness_mod.set_brightness(20)
+        assert applied == [("ddc1", 20)]
+        assert good.written == 20
+
+    def test_a_missing_executable_is_an_error_not_a_crash(self, monkeypatch):
+        """OSError used to escape uncaught and reach the daemon's tick handler."""
+        def gone(*a, **k):
+            raise FileNotFoundError(2, "No such file or directory", "ddcutil")
+
+        monkeypatch.setattr(backends.subprocess, "run", gone)
+        with pytest.raises(BacklightError, match="ddcutil"):
+            DdcutilBacklight(1).get()

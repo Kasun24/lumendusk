@@ -63,6 +63,12 @@ _STYLES_GLOBS = [
 
 
 # ---- gsettings helpers ------------------------------------------------------
+# gsettings goes through dconf over D-Bus, and a wedged dconf-service leaves it
+# waiting rather than failing. The daemon has one thread, so that would stop
+# every future transition with a log that just goes quiet. These calls take
+# single-digit milliseconds when healthy; five seconds is far past any real one.
+_GSETTINGS_TIMEOUT = 5
+
 _schemas_cache: set[str] | None = None
 
 
@@ -71,9 +77,11 @@ def _schemas() -> set[str]:
     if _schemas_cache is None:
         try:
             out = subprocess.run(["gsettings", "list-schemas"],
-                                 check=True, capture_output=True, text=True).stdout
+                                 check=True, capture_output=True, text=True,
+                                 timeout=_GSETTINGS_TIMEOUT).stdout
             _schemas_cache = set(out.split())
-        except (OSError, subprocess.CalledProcessError):
+        except (OSError, subprocess.CalledProcessError,
+                subprocess.TimeoutExpired):
             _schemas_cache = set()
     return _schemas_cache
 
@@ -83,9 +91,12 @@ def _get(schema: str, key: str) -> str | None:
         return None
     try:
         out = subprocess.run(["gsettings", "get", schema, key],
-                             check=True, capture_output=True, text=True).stdout.strip()
+                             check=True, capture_output=True, text=True,
+                             timeout=_GSETTINGS_TIMEOUT).stdout.strip()
         return out.strip("'\"")
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        # None compares unequal to any target, so an unreadable key falls
+        # through to a write rather than being skipped as "already correct".
         return None
 
 
@@ -108,11 +119,16 @@ def _set(schema: str, key: str, value: str) -> bool:
         return True
     try:
         subprocess.run(["gsettings", "set", schema, key, value],
-                       check=True, capture_output=True, text=True)
+                       check=True, capture_output=True, text=True,
+                       timeout=_GSETTINGS_TIMEOUT)
         return True
-    except subprocess.CalledProcessError as exc:
+    except subprocess.TimeoutExpired:
+        log.warning("set %s %s '%s' timed out after %ss.", schema, key, value,
+                    _GSETTINGS_TIMEOUT)
+        return False
+    except (subprocess.CalledProcessError, OSError) as exc:
         log.warning("set %s %s '%s' failed: %s", schema, key, value,
-                    (exc.stderr or "").strip())
+                    getattr(exc, "stderr", "") and exc.stderr.strip() or exc)
         return False
 
 

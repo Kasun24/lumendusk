@@ -39,11 +39,13 @@ def _external_monitors() -> list[Backlight]:
     if not shutil.which("ddcutil"):
         return []
     try:
+        # Longer than the per-monitor limit in backends.py: detect probes every
+        # I²C bus on the machine, so it is legitimately slower than a read.
         out = subprocess.run(
             ["ddcutil", "detect", "--brief"],
             check=True, capture_output=True, text=True, timeout=15,
         ).stdout
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return []
     mons: list[Backlight] = []
     display: int | None = None
@@ -73,9 +75,10 @@ def _xrandr_monitors() -> list[Backlight]:
         return []
     try:
         out = subprocess.run(
-            ["xrandr", "--query"], check=True, capture_output=True, text=True
+            ["xrandr", "--query"], check=True, capture_output=True, text=True,
+            timeout=10,
         ).stdout
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return []
     mons: list[Backlight] = []
     for line in out.splitlines():

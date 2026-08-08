@@ -18,6 +18,38 @@ class BacklightError(RuntimeError):
     """Raised when a backend cannot read or set brightness."""
 
 
+# Every backend shells out, and the daemon has exactly one thread. A command
+# that *hangs* rather than fails takes the whole daemon with it: no more ticks,
+# no more transitions, and a log that simply stops — which reads identically to
+# a healthy idle daemon, so nobody notices until a theme fails to change hours
+# later.
+#
+# DDC/CI is the realistic offender. ddcutil talks to the monitor over the I²C
+# bus, and a display that is asleep, switched to another input, or just flaky
+# can leave it waiting with no error to catch. A normal getvcp/setvcp on this
+# hardware takes well under a second, so ten is generous enough never to fire
+# on a healthy call and short enough that a wedged one is survivable.
+_TIMEOUT = 10
+
+
+def _run(argv: list[str], what: str) -> "subprocess.CompletedProcess[str]":
+    """Run a backend command, converting every failure into BacklightError.
+
+    Callers already handle BacklightError per monitor, so folding timeouts and
+    a missing executable into it means one bad display can't escalate past the
+    monitor it belongs to.
+    """
+    try:
+        return subprocess.run(argv, check=True, capture_output=True, text=True,
+                              timeout=_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise BacklightError(f"{what} timed out after {_TIMEOUT}s") from exc
+    except subprocess.CalledProcessError as exc:
+        raise BacklightError((exc.stderr or "").strip() or f"{what} failed") from exc
+    except OSError as exc:
+        raise BacklightError(f"{what}: {exc}") from exc
+
+
 class Backlight:
     """Base interface. ``id`` is how the CLI/config addresses this monitor."""
 
@@ -58,14 +90,9 @@ class SysfsBacklight(Backlight):
     def set(self, percent: int) -> None:
         percent = self._clamp(percent)
         if self._use_ctl:
-            try:
-                subprocess.run(
-                    ["brightnessctl", "--device", self.id, "set", f"{percent}%"],
-                    check=True, capture_output=True, text=True,
-                )
-                return
-            except subprocess.CalledProcessError as exc:
-                raise BacklightError(exc.stderr.strip() or "brightnessctl failed") from exc
+            _run(["brightnessctl", "--device", self.id, "set", f"{percent}%"],
+                 "brightnessctl")
+            return
         raw = int(round(percent / 100 * self._max))
         try:
             (self._path / "brightness").write_text(str(raw))
@@ -87,13 +114,10 @@ class DdcutilBacklight(Backlight):
         self._display = str(display)
 
     def get(self) -> int:
-        try:
-            out = subprocess.run(
-                ["ddcutil", "--display", self._display, "--brief", "getvcp", "10"],
-                check=True, capture_output=True, text=True,
-            ).stdout
-        except subprocess.CalledProcessError as exc:
-            raise BacklightError(exc.stderr.strip() or "ddcutil getvcp failed") from exc
+        out = _run(
+            ["ddcutil", "--display", self._display, "--brief", "getvcp", "10"],
+            "ddcutil getvcp",
+        ).stdout
         # Brief format: "VCP 10 C <current> <max>"
         parts = out.split()
         try:
@@ -103,13 +127,8 @@ class DdcutilBacklight(Backlight):
 
     def set(self, percent: int) -> None:
         percent = self._clamp(percent)
-        try:
-            subprocess.run(
-                ["ddcutil", "--display", self._display, "setvcp", "10", str(percent)],
-                check=True, capture_output=True, text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise BacklightError(exc.stderr.strip() or "ddcutil setvcp failed") from exc
+        _run(["ddcutil", "--display", self._display, "setvcp", "10", str(percent)],
+             "ddcutil setvcp")
 
 
 class XrandrBacklight(Backlight):
@@ -123,12 +142,7 @@ class XrandrBacklight(Backlight):
         self.label = f"{output} (software dimming — xrandr gamma)"
 
     def get(self) -> int:
-        try:
-            out = subprocess.run(
-                ["xrandr", "--verbose"], check=True, capture_output=True, text=True
-            ).stdout
-        except subprocess.CalledProcessError as exc:
-            raise BacklightError("xrandr --verbose failed") from exc
+        out = _run(["xrandr", "--verbose"], "xrandr --verbose").stdout
         # Find the block for this output and read its "Brightness: <float>".
         in_block = False
         for line in out.splitlines():
@@ -140,10 +154,5 @@ class XrandrBacklight(Backlight):
 
     def set(self, percent: int) -> None:
         percent = self._clamp(percent)
-        try:
-            subprocess.run(
-                ["xrandr", "--output", self.id, "--brightness", f"{percent/100:.2f}"],
-                check=True, capture_output=True, text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise BacklightError(exc.stderr.strip() or "xrandr --brightness failed") from exc
+        _run(["xrandr", "--output", self.id, "--brightness", f"{percent/100:.2f}"],
+             "xrandr --brightness")
