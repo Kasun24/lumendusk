@@ -44,7 +44,13 @@ mkdir -p "$OUT/engine/vendor"
 cp "$ROOT/applet/$UUID/applet.js" \
    "$ROOT/applet/$UUID/metadata.json" \
    "$ROOT/applet/$UUID/settings-schema.json" \
+   "$ROOT/applet/$UUID/icon.png" \
+   "$ROOT/applet/$UUID/icon.svg" \
    "$OUT/"
+
+# Spices shows the changelog on the applet's page, and every applet in the
+# repository carries one next to its icon.
+cp "$ROOT/CHANGELOG.md" "$OUT/"
 
 # The engine is copied from src/ every build rather than kept as a second copy
 # in git. Two checked-in copies would drift, and the drift would only show up
