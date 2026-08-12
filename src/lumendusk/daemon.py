@@ -5,7 +5,9 @@ Key behaviours from the plan:
 * **Transition-only apply** — we apply on startup, then only when the phase
   actually changes. This is what makes manual overrides stick: if you tweak the
   theme or brightness by hand mid-period, the daemon leaves it alone until the
-  next real day↔night transition.
+  next real day↔night transition. The one exception is a *setting* change: if
+  the appearance chosen for the current phase changes, that is a request, not
+  drift, and the theme follows at once.
 * **Suspend/resume safety** — every tick re-evaluates the phase, so if the clock
   jumped across a transition while asleep, the change is caught on the next tick
   rather than waiting a full period. Large wall-clock jumps are logged.
@@ -28,7 +30,7 @@ from enum import Enum
 from . import brightness as brightness_mod
 from . import config as config_mod
 from . import log
-from .apply import set_nightlight, set_theme
+from .apply import appearance_for, set_nightlight, set_theme
 from .schedule import is_night
 
 
@@ -104,6 +106,11 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
     interval = max(1, interval)
     cfg = config_mod.load()
     last: Phase | None = None
+    # The appearance we last applied. Transition-only apply assumes the target
+    # for a phase never moves, which stopped being true once day and night got
+    # their own light/dark setting: changing "daytime appearance" to dark at
+    # noon has to show up now, not at sunset.
+    last_appearance: str | None = None
     was_manual = not cfg.is_auto()
     last_wall = time.time()
 
@@ -121,6 +128,7 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
         phase = current_phase(cfg)
         apply_phase(phase, cfg)
         last = phase
+        last_appearance = appearance_for(phase is Phase.NIGHT, cfg)
         log.info("started (%s mode); phase=%s, checking every %ss.",
                  cfg.mode, phase.value, interval)
 
@@ -160,6 +168,7 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
                 log.info("switched to automatic; applying the current phase.")
                 apply_phase(phase, cfg)
                 last = phase
+                last_appearance = appearance_for(phase is Phase.NIGHT, cfg)
                 was_manual = False
                 continue
 
@@ -168,6 +177,23 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
                          phase.value)
                 apply_phase(phase, cfg)
                 last = phase
+                last_appearance = appearance_for(phase is Phase.NIGHT, cfg)
+                continue
+
+            # Same phase, but the appearance chosen for it has changed since we
+            # applied it — the user edited the setting, so this is a change they
+            # just asked for rather than one to sit on until the next
+            # transition. Only the theme moves: night light and brightness don't
+            # depend on this setting, and re-applying them would step on a
+            # manual brightness tweak made in the same period.
+            wanted = appearance_for(phase is Phase.NIGHT, cfg)
+            if wanted != last_appearance:
+                log.info("%s appearance is now %s; applying.", phase.value, wanted)
+                try:
+                    set_theme(phase is Phase.NIGHT, cfg)
+                except Exception:
+                    log.exception("failed to apply the %s appearance.", wanted)
+                last_appearance = wanted
         except KeyboardInterrupt:
             log.info("stopping.")
             return 0

@@ -98,6 +98,7 @@ function findEngineArgv() {
 // exactly, which is what lets the sync below stay generic.
 const SYNCED_KEYS = [
     "control", "mode", "latitude", "longitude", "dark_start", "light_start",
+    "theme_day", "theme_night",
     "nightlight_enabled", "nightlight_temperature",
     "brightness_enabled", "brightness_day", "brightness_night",
 ];
@@ -256,6 +257,14 @@ LumenduskApplet.prototype = {
             this._runEngineAsync(argv, (out, err) => {
                 if (out !== null) {
                     if (key === "control") this._refreshModeItems();
+                    // Picking an appearance for a phase is a request to see it,
+                    // not a preference filed away for later. The daemon does
+                    // notice within a tick, but a settings dialog that appears
+                    // to do nothing for up to a minute reads as broken.
+                    if (key === "theme_day" || key === "theme_night") {
+                        this._runEngineAsync(["appearance", "auto"],
+                                             () => this._refreshModeItems());
+                    }
                     return;
                 }
                 global.logError("Lumendusk: rejected " + key + "=" + text +
@@ -438,29 +447,62 @@ LumenduskApplet.prototype = {
         this._statusItem.actor.visible = auto;
         if (this._applyNow) this._applyNow.actor.visible = auto;
 
-        // Whole phrases rather than assembled fragments. Building
-        // "Following " + source + " · " + phase reads fine in English and is
-        // untranslatable everywhere else: word order moves, and some languages
-        // need a different separator. Four complete strings cost a translator
-        // less than three fragments they cannot see the shape of.
         if (auto) {
-            let bySun = this._readMode() === "sun";
-            if (bySun) {
-                this._statusItem.label.text = dark
-                    ? _("Following sunrise and sunset · night")
-                    : _("Following sunrise and sunset · day");
-                this.set_applet_tooltip(_("Lumendusk — automatic (sunrise and sunset)"));
-            } else {
-                this._statusItem.label.text = dark
-                    ? _("Following fixed times · night")
-                    : _("Following fixed times · day");
-                this.set_applet_tooltip(_("Lumendusk — automatic (fixed times)"));
-            }
+            this.set_applet_tooltip(this._readMode() === "sun"
+                ? _("Lumendusk — automatic (sunrise and sunset)")
+                : _("Lumendusk — automatic (fixed times)"));
+            let night = this._phaseFromAppearance(dark);
+            if (night === null) this._refreshPhase();   // async; sets the label
+            else this._setStatusText(night);
         } else {
             this.set_applet_tooltip(dark
                 ? _("Lumendusk — manual (dark)")
                 : _("Lumendusk — manual (light)"));
             this._refreshNightlight();
+        }
+    },
+
+    _phaseFromAppearance: function (dark) {
+        // The status line reports the *phase*, which stopped being the same
+        // thing as the appearance once day and night each got their own
+        // light/dark setting — with "daytime appearance: dark" the desktop is
+        // dark at noon, and calling that night would be a lie.
+        //
+        // While the two phases wear different appearances the shell theme still
+        // tells us the phase for free, just read backwards through the mapping.
+        // When they wear the same one it tells us nothing at all: null, and the
+        // caller asks the engine instead.
+        let day = this.cfg_theme_day || "light";
+        let night = this.cfg_theme_night || "dark";
+        if (day === night) return null;
+        return (dark ? "dark" : "light") === night;
+    },
+
+    _refreshPhase: function () {
+        // Costs a subprocess, so it's only the fallback: sun mode works off the
+        // solar elevation, which the panel has no business recomputing.
+        this._runEngineAsync(["status"], (stdout) => {
+            if (stdout === null || !this._statusItem) return;
+            let match = /\bphase=(\w+)/.exec(stdout);
+            if (match) this._setStatusText(match[1] === "night");
+        });
+    },
+
+    _setStatusText: function (night) {
+        // Whole phrases rather than assembled fragments. Building
+        // "Following " + source + " · " + phase reads fine in English and is
+        // untranslatable everywhere else: word order moves, and some languages
+        // need a different separator. Four complete strings cost a translator
+        // less than three fragments they cannot see the shape of.
+        if (!this._statusItem) return;
+        if (this._readMode() === "sun") {
+            this._statusItem.label.text = night
+                ? _("Following sunrise and sunset · night")
+                : _("Following sunrise and sunset · day");
+        } else {
+            this._statusItem.label.text = night
+                ? _("Following fixed times · night")
+                : _("Following fixed times · day");
         }
     },
 

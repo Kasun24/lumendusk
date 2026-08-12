@@ -69,6 +69,14 @@ class Config:
     # style (system UI + apps). ``theme_accent`` blank = auto-detect the current
     # accent and keep it; set e.g. "yaru"/"orange"/"aqua" to force one.
     theme_accent: str = ""
+
+    # Which appearance each phase wears. Day → light and night → dark are the
+    # defaults and what most people want, but they are a preference, not a law:
+    # plenty of people want dark at their desk all day and still want the screen
+    # warmed and dimmed after sunset. Setting both to the same value turns theme
+    # switching off while leaving night light and brightness on the schedule.
+    theme_day: str = "light"         # "light" or "dark"
+    theme_night: str = "dark"
     # Legacy full theme names — kept for backward compatibility with older
     # config files; no longer used to switch (the style catalog drives it now).
     theme_light: str = "Mint-Y"
@@ -137,6 +145,16 @@ def _from_toml(data: dict) -> Config:
     def _int(src: dict, key: str, default: int) -> int:
         return int(_num(src, key, default))
 
+    def _appearance(src: dict, key: str, default: str) -> str:
+        """Read a per-phase appearance, ignoring anything that isn't light/dark.
+
+        Unlike the free-text fields, a typo here has a visible consequence — an
+        unrecognised value would have to mean *something* at apply time, and
+        guessing is worse than falling back to the default for that phase.
+        """
+        value = src.get(key, default)
+        return value if value in ("light", "dark") else default
+
     def _control(src: dict, default: str) -> str:
         """Read ``control``, migrating config files written before it existed.
 
@@ -166,6 +184,8 @@ def _from_toml(data: dict) -> Config:
         dark_start=_str(fixed, "dark_start", d.dark_start),
         light_start=_str(fixed, "light_start", d.light_start),
         theme_accent=_str(theme, "accent", d.theme_accent),
+        theme_day=_appearance(theme, "day", d.theme_day),
+        theme_night=_appearance(theme, "night", d.theme_night),
         theme_light=_str(theme, "light", d.theme_light),
         theme_dark=_str(theme, "dark", d.theme_dark),
         nightlight_enabled=_bool(night, "enabled", d.nightlight_enabled),
@@ -212,6 +232,12 @@ def _to_toml(c: Config) -> str:
         f"dark_start = {s(c.dark_start)}\n"
         f"light_start = {s(c.light_start)}\n\n"
         "[theme]\n"
+        "# Which appearance each half of the day wears — \"light\" or \"dark\".\n"
+        "# Want dark all the time but still want the screen warmed and dimmed\n"
+        "# at night? Set day = \"dark\" and leave the rest alone. Setting both\n"
+        "# the same simply stops the theme from changing.\n"
+        f"day = {s(c.theme_day)}\n"
+        f"night = {s(c.theme_night)}\n"
         "# Whole-desktop dark/light (system UI + apps). accent = \"\" keeps your\n"
         "# current accent; or force one: yaru, orange, aqua, teal, blue, grey,\n"
         "# sand, red, pink, purple, navy, cyan, green.\n"

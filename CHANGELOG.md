@@ -4,6 +4,27 @@ All notable changes to Lumendusk. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-08-12
+
+### Added
+
+- **Each phase chooses its own appearance.** Day → light and night → dark were
+  hard-coded; they are now settings (Screen → Appearance, or `theme_day` /
+  `theme_night` in the config file). Set the daytime appearance to Dark and the
+  desktop stays dark at noon while the night light and brightness still follow
+  the clock — the common case of preferring dark without giving up the rest.
+  Setting both phases the same simply stops the theme from changing.
+- `lumendusk appearance auto` applies whichever appearance the schedule calls
+  for right now, and nothing else.
+
+### Changed
+
+- The daemon applies a changed appearance setting at once instead of waiting
+  for the next transition. Transition-only apply exists to protect changes the
+  user makes *by hand*; a setting they just edited is a request, not drift.
+- The panel's status line reports the phase rather than reading it off the
+  shell theme, which stops being the same thing once the day can be dark.
+
 ## [0.1.0] — 2026-08-08
 
 First release worth a version number. Phase 1 (Linux Mint / Cinnamon) is

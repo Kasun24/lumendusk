@@ -35,6 +35,8 @@ macOS (menu-bar extra).
   it moves the shell, panel, window borders, GTK/GTK4 apps, Flatpak apps (XApp
   portal), icons and accent together (not just the GTK theme), and night light
   on/off.
+- **A choice of appearance for each half of the day** — want dark at noon too?
+  See [Dark all day](#dark-all-day).
 - A brightness read/set/list tool across sysfs/brightnessctl, ddcutil, and
   xrandr backends (Step B1).
 - **Brightness on day/night transitions** (Step B3) — day and night levels
@@ -78,6 +80,31 @@ Switching *into* Manual drops the night light once, so colors are true for a
 film; after that the toggle is yours.
 
 Both live in the settings panel too, so the menu and Configure never disagree.
+
+### Dark all day
+
+Day means light and night means dark only because that's the default. Each
+phase has its own setting, under **Configure → Screen → Appearance**:
+
+| Daytime | Night-time | What you get |
+|---------|-----------|--------------|
+| Light | Dark | The default — light by day, dark after dark. |
+| **Dark** | **Dark** | **Dark around the clock, and the screen still warms and dims at night.** |
+| Light | Light | The theme never changes; night light and brightness still do. |
+
+That second row is the reason this exists: preferring a dark desktop shouldn't
+cost you the night light and the dimming, which is what happens if you reach
+for Manual instead. Manual freezes *everything*; this only pins the theme.
+
+From a terminal:
+
+```bash
+lumendusk config set theme_day dark      # dark at noon as well
+lumendusk appearance auto                # apply what the schedule wants now
+```
+
+The change takes effect immediately — the transition-only rule protects the
+tweaks you make by hand, not the settings you just asked for.
 
 ## Install (Linux Mint / Cinnamon)
 
@@ -165,6 +192,7 @@ lumendusk brightness get         # current brightness
 lumendusk brightness set 60      # set brightness to 60%
 lumendusk brightness day|night   # apply the day/night brightness preset
 lumendusk appearance toggle      # flip whole-desktop dark <-> light (or dark|light|status)
+lumendusk appearance auto        # apply the appearance configured for the current phase
 
 # From a source checkout without installing:
 PYTHONPATH=src python3 -m lumendusk --once
