@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lumendusk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Automatic dark/light theme and night light for your desktop, driven by time of day."
 readme = "README.md"
 requires-python = ">=3.9"

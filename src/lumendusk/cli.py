@@ -10,6 +10,8 @@
     lumendusk auto                 let Lumendusk drive (follow the schedule)
     lumendusk manual               leave it to the user; freeze, night light off
     lumendusk nightlight on|off    warm the screen now (manual control)
+    lumendusk appearance dark|light  switch the whole desktop now
+    lumendusk appearance auto      apply the appearance configured for now
     lumendusk mode day             switch to full day mode now (manual override)
     lumendusk mode night           switch to full night mode now (manual override)
     lumendusk location             show the current + detected location
@@ -72,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser("appearance",
                        help="Dark/light desktop switch (system UI + apps).")
-    a.add_argument("which", choices=["dark", "light", "toggle", "status"])
+    a.add_argument("which", choices=["dark", "light", "auto", "toggle", "status"])
 
     n = sub.add_parser("nightlight",
                        help="Warm the screen on/off right now (manual control).")
@@ -189,6 +191,8 @@ def _validate(key: str, value: object) -> str | None:
         return "control must be 'auto' or 'manual'."
     if key == "mode" and value not in ("sun", "fixed"):
         return "mode must be 'sun' or 'fixed'."
+    if key in ("theme_day", "theme_night") and value not in ("light", "dark"):
+        return f"{key} must be 'light' or 'dark'."
     if key in ("dark_start", "light_start"):
         # The schedule falls back on a bad time rather than failing, so check
         # the shape here — silently storing "7pm" is worse than refusing it.
@@ -278,6 +282,15 @@ def _appearance_command(which: str) -> int:
     if which == "status":
         appearance.status()
         return 0
+    if which == "auto":
+        # The appearance the schedule wants right now, and nothing else — no
+        # night light, no brightness. That narrowness is the point: this is what
+        # runs after someone changes "daytime appearance", and re-applying a
+        # brightness preset would undo a slider tweak they made this afternoon.
+        from .apply.theme import appearance_for
+        from .daemon import Phase, current_phase
+        cfg = config_mod.load()
+        which = appearance_for(current_phase(cfg) is Phase.NIGHT, cfg)
     if which == "toggle":
         which = "light" if appearance.current_mode() == "dark" else "dark"
     return 0 if appearance.set_mode(which) else 1
@@ -325,6 +338,15 @@ def _status() -> int:
     if not cfg.is_auto():
         print("  manual: your dark/light choice stands until you switch back "
               "with 'lumendusk auto'.")
+    # Only worth saying when it isn't the obvious day=light/night=dark. Without
+    # this, "phase=day" next to a dark desktop reads as a bug.
+    if cfg.is_auto() and (cfg.theme_day, cfg.theme_night) != ("light", "dark"):
+        if cfg.theme_day == cfg.theme_night:
+            print(f"  appearance stays {cfg.theme_day} in both phases; only "
+                  f"night light and brightness follow the schedule.")
+        else:
+            print(f"  appearance: {cfg.theme_day} by day, "
+                  f"{cfg.theme_night} by night.")
     if cfg.is_auto() and cfg.mode == "sun" and not cfg.location_is_set():
         print(f"  sun mode has no location set, so the fixed times "
               f"({cfg.light_start}–{cfg.dark_start}) are in use. Set one with: "
