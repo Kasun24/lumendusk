@@ -1,3 +1,3 @@
 """Lumendusk — automatic dark/light theme and night light for your desktop."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

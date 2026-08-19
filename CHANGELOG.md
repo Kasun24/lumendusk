@@ -4,6 +4,34 @@ All notable changes to Lumendusk. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-08-19
+
+### Fixed
+
+- **Night light and brightness settings did nothing until the next
+  transition.** Changing the warmth or a brightness preset in Screen settings
+  stored the value and left the screen alone — for up to a whole phase, which
+  looked like a control that wasn't wired up. Only the appearance setting had
+  been given this treatment in 0.2.0; the other two now behave the same way.
+  Still narrow, so it can't be mistaken for the daemon overriding you: only the
+  setting that actually changed is applied, and only if it affects the phase
+  you are in. Editing the day brightness after dark changes nothing tonight,
+  and a level you nudged by hand this evening survives the edit.
+
+- **The settings panel's sliders no longer fire once per step.** Cinnamon
+  reports every value a slider passes on the way to where you let go, which was
+  harmless while those values only reached a file and is not now that they reach
+  the screen. Edits are coalesced, and only one write per setting is ever out at
+  a time with the newest value winning — so a brightness drag lands where you
+  left it, instead of replaying every stop on the way at DDC/CI's pace.
+
+### Changed
+
+- `lumendusk config set` takes `--apply`, which shows the stored change now
+  instead of waiting for the daemon's next tick. This is what the settings
+  panel uses, so the panel and the schedule agree on what a changed setting
+  means rather than each deciding for itself.
+
 ## [0.2.0] — 2026-08-12
 
 ### Added

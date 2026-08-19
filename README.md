@@ -63,6 +63,9 @@ transitions.
   and (if enabled) sets the brightness preset.
 - Applies only *on transitions*, so a manual change you make by hand sticks until
   the next transition. Wakes about once a minute; idle in between.
+- A setting you *change* is the exception: it takes effect straight away, and
+  only what changed moves. Editing the day brightness after dark leaves tonight
+  alone.
 
 ### Automatic and Manual
 
@@ -104,7 +107,9 @@ lumendusk appearance auto                # apply what the schedule wants now
 ```
 
 The change takes effect immediately — the transition-only rule protects the
-tweaks you make by hand, not the settings you just asked for.
+tweaks you make by hand, not the settings you just asked for. The same goes for
+the night light warmth and the brightness presets: change one and you see it,
+as long as it's the phase you're actually in.
 
 ## Install (Linux Mint / Cinnamon)
 

@@ -153,6 +153,7 @@ LumenduskApplet.prototype = {
         });
 
         this._brightnessDebounce = 0;
+        this._pushDebounce = 0;
         // Guards the slider's value-changed handler while we're setting the
         // slider ourselves — otherwise syncing the real value straight back to
         // the engine would re-apply it (and fight the user mid-drag).
@@ -173,6 +174,9 @@ LumenduskApplet.prototype = {
         // What we believe the engine already has, so a settings-changed signal
         // only writes the keys that actually moved.
         this._pushed = {};
+        // Which keys have a write out with the engine right now — see
+        // _pushSettings.
+        this._inflight = {};
 
         let uuid = (metadata && metadata.uuid) || "lumendusk@kasun";
         try {
@@ -203,7 +207,21 @@ LumenduskApplet.prototype = {
 
     _onSettingsChanged: function () {
         if (this._loadingSettings) return;
-        this._pushSettings();
+        // Coalesce. The warmth and brightness controls are sliders, and Cinnamon
+        // reports every value they pass on the way to where the user let go —
+        // one write and one apply each. That was harmless while the values only
+        // went into a file; now that they reach the screen, a drag would queue
+        // dozens of them and the last one would land seconds after the mouse
+        // stopped. Same reason as the menu slider's debounce, and long enough
+        // that a drag settles inside it while a click still feels immediate.
+        if (this._pushDebounce) {
+            Mainloop.source_remove(this._pushDebounce);
+        }
+        this._pushDebounce = Mainloop.timeout_add(400, () => {
+            this._pushDebounce = 0;
+            this._pushSettings();
+            return false;
+        });
     },
 
     _pullSettings: function () {
@@ -246,25 +264,45 @@ LumenduskApplet.prototype = {
             let value = this["cfg_" + key];
             if (value === undefined) continue;
             if (this._pushed[key] === value) continue;
+            // One write per key at a time, newest value wins. A brightness
+            // write goes out over DDC/CI and takes a second or two, so a slider
+            // dragged across several stops would otherwise queue them all and
+            // replay them one by one on the monitor long after the mouse
+            // stopped. Leaving _pushed alone keeps this key looking changed, so
+            // the re-run below picks up wherever the slider ended up rather
+            // than the value that was current when we skipped.
+            if (this._inflight[key]) {
+                this._inflight[key] = "again";
+                continue;
+            }
             this._pushed[key] = value;
+            this._inflight[key] = true;
             let text = (typeof value === "boolean")
                 ? (value ? "true" : "false") : String(value);
             // `control` gets its own command rather than `config set`, so that
             // changing it in the dialog takes effect at once — same reason as
-            // _setControl(). Everything else is a plain stored value.
+            // _setControl().
+            //
+            // Everything else is stored with `--apply`, which shows the change
+            // now if it affects the phase we're currently in. Without it the
+            // dialog writes the file and the screen sits unchanged until the
+            // next tick, which reads as a control that doesn't work. The engine
+            // decides what "affects" means: dragging the *day* brightness after
+            // dark still changes nothing.
             let argv = (key === "control" && (text === "auto" || text === "manual"))
-                ? [text] : ["config", "set", key, text];
+                ? [text] : ["config", "set", key, text, "--apply"];
             this._runEngineAsync(argv, (out, err) => {
+                let again = this._inflight[key] === "again";
+                this._inflight[key] = false;
                 if (out !== null) {
-                    if (key === "control") this._refreshModeItems();
-                    // Picking an appearance for a phase is a request to see it,
-                    // not a preference filed away for later. The daemon does
-                    // notice within a tick, but a settings dialog that appears
-                    // to do nothing for up to a minute reads as broken.
-                    if (key === "theme_day" || key === "theme_night") {
-                        this._runEngineAsync(["appearance", "auto"],
-                                             () => this._refreshModeItems());
+                    // Both of these are on the menu's status line, so it has to
+                    // be redrawn: control switches which items are shown, and
+                    // the appearance mapping is how the phase is read back.
+                    if (key === "control" || key === "theme_day" ||
+                        key === "theme_night") {
+                        this._refreshModeItems();
                     }
+                    if (again) this._pushSettings();
                     return;
                 }
                 global.logError("Lumendusk: rejected " + key + "=" + text +
@@ -666,6 +704,10 @@ LumenduskApplet.prototype = {
         if (this._brightnessDebounce) {
             Mainloop.source_remove(this._brightnessDebounce);
             this._brightnessDebounce = 0;
+        }
+        if (this._pushDebounce) {
+            Mainloop.source_remove(this._pushDebounce);
+            this._pushDebounce = 0;
         }
         // Drops the file monitor Cinnamon keeps on the settings file.
         if (this.settings) {
