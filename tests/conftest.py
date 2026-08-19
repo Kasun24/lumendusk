@@ -18,6 +18,11 @@ from lumendusk.apply.theme import appearance_for
 def isolated_xdg(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    # The cache too: it holds the monitor list, the ddcutil lock, and which
+    # monitors are being skipped for not answering — a test that fails a fake
+    # monitor would otherwise write that into the developer's real ~/.cache and
+    # have their actual screen skipped for five minutes.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     # These modules cache state across calls on purpose (last-good config,
     # warn-once flags); reset it so tests don't leak into each other.
     monkeypatch.setattr(config_mod, "_last_good", None, raising=False)

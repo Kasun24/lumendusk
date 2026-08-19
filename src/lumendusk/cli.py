@@ -400,9 +400,16 @@ def _brightness_command(args: argparse.Namespace) -> int:
                   "to the 'i2c' group.", file=sys.stderr)
             return 1
         for mon in monitors:
+            # Probing for real is the point of this command, so its answer is
+            # also the freshest thing anyone has: a monitor being skipped for
+            # not answering starts or stops being skipped right here. That is
+            # what makes `brightness list` the thing to run after power-cycling
+            # a display, rather than a command that agrees with a stale record.
             try:
                 level = f"{mon.get()}%"
+                brightness_mod.note_reachable(mon.id)
             except brightness_mod.BacklightError as exc:
+                brightness_mod.note_unreachable(mon.id, exc)
                 level = f"(read failed: {exc})"
             tag = "" if mon.real else "  [software dimming]"
             print(f"  {mon.id:<12} {mon.backend:<12} {level:<8} {mon.label}{tag}")

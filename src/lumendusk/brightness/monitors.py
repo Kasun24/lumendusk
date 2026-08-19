@@ -112,7 +112,7 @@ _CACHE_MAX_AGE = 300.0
 _DRM = Path("/sys/class/drm")
 
 
-def _connector_fingerprint() -> str:
+def connector_fingerprint() -> str:
     """A cheap signature of which displays are physically attached."""
     try:
         parts = []
@@ -154,7 +154,7 @@ def _from_spec(spec: dict) -> Backlight:
 def _read_cache() -> list[Backlight] | None:
     try:
         data = json.loads(_cache_path().read_text(encoding="utf-8"))
-        if data.get("fingerprint") != _connector_fingerprint():
+        if data.get("fingerprint") != connector_fingerprint():
             return None
         if time.time() - float(data["created"]) > _CACHE_MAX_AGE:
             return None
@@ -172,7 +172,7 @@ def _write_cache(monitors: list[Backlight]) -> None:
         return
     payload = {
         "created": time.time(),
-        "fingerprint": _connector_fingerprint(),
+        "fingerprint": connector_fingerprint(),
         "monitors": specs,
     }
     try:

@@ -13,7 +13,7 @@ import time
 import pytest
 
 from lumendusk import brightness as brightness_mod
-from lumendusk.brightness import backends, monitors
+from lumendusk.brightness import backends, backoff, monitors
 from lumendusk.brightness.backends import (
     BacklightError,
     DdcutilBacklight,
@@ -21,6 +21,7 @@ from lumendusk.brightness.backends import (
     XrandrBacklight,
 )
 from lumendusk.brightness.monitors import select
+from lumendusk.cli import main as cli_main
 
 
 class FakeCompleted:
@@ -134,17 +135,63 @@ class TestSelect:
 
 
 class FakeMonitor:
-    """A monitor that either accepts a write or refuses it."""
+    """A monitor that either answers or refuses to, and counts being asked."""
 
-    def __init__(self, mid, fails=False):
+    backend = "ddcutil"
+    real = True
+
+    def __init__(self, mid, fails=False, level=50):
         self.id = mid
+        self.label = f"fake {mid}"
         self.fails = fails
+        self.level = level
         self.written = None
+        self.asked = 0
 
     def set(self, percent):
+        self.asked += 1
         if self.fails:
             raise BacklightError("ddcutil setvcp failed")
         self.written = percent
+
+    def get(self):
+        self.asked += 1
+        if self.fails:
+            raise BacklightError("ddcutil getvcp failed")
+        return self.level
+
+
+@pytest.fixture
+def fake_monitors(monkeypatch):
+    def install(*mons):
+        monkeypatch.setattr(brightness_mod, "list_monitors",
+                            lambda *a, **kw: list(mons))
+        return mons
+    return install
+
+
+@pytest.fixture
+def logged():
+    """Collect Lumendusk's own log messages.
+
+    Not pytest's ``caplog``: log.py sets ``propagate = False``, so records
+    never reach the root logger caplog listens on. Attaching to the
+    project logger is the only way to see them.
+    """
+    messages: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    logger = logging.getLogger("lumendusk")
+    handler = Collect()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        yield messages
+    finally:
+        logger.removeHandler(handler)
 
 
 class TestSetBrightnessLogging:
@@ -158,35 +205,8 @@ class TestSetBrightnessLogging:
     """
 
     @pytest.fixture
-    def monitors(self, monkeypatch):
-        def install(*mons):
-            monkeypatch.setattr(brightness_mod, "list_monitors",
-                                lambda: list(mons))
-            return mons
-        return install
-
-    @pytest.fixture
-    def logged(self):
-        """Collect Lumendusk's own log messages.
-
-        Not pytest's ``caplog``: log.py sets ``propagate = False``, so records
-        never reach the root logger caplog listens on. Attaching to the
-        project logger is the only way to see them.
-        """
-        messages: list[str] = []
-
-        class Collect(logging.Handler):
-            def emit(self, record):
-                messages.append(record.getMessage())
-
-        logger = logging.getLogger("lumendusk")
-        handler = Collect()
-        logger.setLevel(logging.INFO)
-        logger.addHandler(handler)
-        try:
-            yield messages
-        finally:
-            logger.removeHandler(handler)
+    def monitors(self, fake_monitors):
+        return fake_monitors
 
     def test_success_names_the_monitors_it_set(self, monitors, logged):
         a, b = monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2"))
@@ -284,7 +304,7 @@ class TestDiscoveryCache:
     @pytest.fixture
     def cache(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-        monkeypatch.setattr(monitors, "_connector_fingerprint", lambda: "dp1:connected")
+        monkeypatch.setattr(monitors, "connector_fingerprint", lambda: "dp1:connected")
         probes = {"n": 0}
 
         def probe():
@@ -306,7 +326,7 @@ class TestDiscoveryCache:
         monitors.list_monitors()
         assert cache["n"] == 1
 
-        monkeypatch.setattr(monitors, "_connector_fingerprint",
+        monkeypatch.setattr(monitors, "connector_fingerprint",
                             lambda: "dp1:connected|hdmi1:connected")
         monitors.list_monitors()
         assert cache["n"] == 2, "a hotplug must not wait for the cache to age out"
@@ -351,7 +371,7 @@ class TestDiscoveryCache:
         """An empty result usually means ddcutil failed, not that the machine
         has no monitors — caching it would make one bad probe stick."""
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-        monkeypatch.setattr(monitors, "_connector_fingerprint", lambda: "x")
+        monkeypatch.setattr(monitors, "connector_fingerprint", lambda: "x")
         monkeypatch.setattr(monitors, "_internal_monitors", list)
         monkeypatch.setattr(monitors, "_external_monitors", list)
         monkeypatch.setattr(monitors, "_xrandr_monitors", list)
@@ -443,3 +463,106 @@ class TestDdcLock:
         finally:
             fcntl_mod.flock(blocker, fcntl_mod.LOCK_UN)
             blocker.close()
+
+
+class TestUnreachableMonitorBackoff:
+    """A monitor that stops answering must stop costing anything.
+
+    DDC/CI failure is slow failure: ddcutil retries, then waits out its
+    timeout, and every brightness change pays that before reaching the
+    displays that do work. One wedged monitor turned a two-second change into
+    a six-second one here, at every transition, every slider move and every
+    menu open, for as long as it stayed wedged.
+    """
+
+    def test_a_monitor_that_failed_is_not_asked_again(self, fake_monitors):
+        good, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        brightness_mod.set_brightness(40)
+        assert good.asked == 2
+        assert bad.asked == 1, "asked once, then left alone"
+
+    def test_the_skip_is_said_out_loud(self, fake_monitors, logged):
+        fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        brightness_mod.set_brightness(40)
+        text = "\n".join(logged)
+        assert "not asking again for 5 minutes" in text
+        assert "brightness → 40% on ddc1 (ddc2 skipped)." in text
+
+    def test_the_working_monitors_still_get_set(self, fake_monitors):
+        good, _ = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        assert brightness_mod.set_brightness(40) == [("ddc1", 40)]
+        assert good.written == 40
+
+    def test_naming_the_monitor_asks_it_anyway(self, fake_monitors):
+        """The way back in without waiting: ask about that monitor directly.
+
+        Which is what someone does right after power-cycling it, and a timer
+        they cannot see would be a poor answer.
+        """
+        _, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        brightness_mod.set_brightness(40, "ddc2")
+        assert bad.asked == 2
+
+    def test_it_is_asked_again_once_the_period_is_up(self, fake_monitors, monkeypatch):
+        _, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        later = time.time() + 301
+        monkeypatch.setattr(backoff.time, "time", lambda: later)
+        brightness_mod.set_brightness(40)
+        assert bad.asked == 2, "the point is to defer the question, not drop it"
+
+    def test_answering_again_clears_the_record(self, fake_monitors, logged):
+        _, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        bad.fails = False
+        brightness_mod.set_brightness(40, "ddc2")      # the direct question
+        assert "ddc2 is answering again." in "\n".join(logged)
+        brightness_mod.set_brightness(50)
+        assert bad.written == 50, "back in the fold, no waiting"
+
+    def test_a_display_being_plugged_in_clears_it(self, fake_monitors, monkeypatch):
+        """Anything that moves the displays makes the record about someone else.
+
+        A power-cycled monitor drops and re-establishes its link, so this is
+        also the ordinary recovery path — and ddcutil's display numbers can be
+        reassigned across it, which makes keeping the record actively wrong.
+        """
+        monkeypatch.setattr(monitors, "connector_fingerprint", lambda: "dp1:connected")
+        fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        assert brightness_mod.sulking("ddc2")
+        monkeypatch.setattr(monitors, "connector_fingerprint",
+                            lambda: "dp1:connected|hdmi1:connected")
+        assert not brightness_mod.sulking("ddc2")
+
+    def test_reading_skips_it_too(self, fake_monitors):
+        # The panel menu reads through this on every open.
+        _, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.get_brightness()
+        assert brightness_mod.get_brightness() == [("ddc1", 50), ("ddc2", None)]
+        assert bad.asked == 1
+
+    def test_brightness_list_is_the_diagnostic_and_probes_for_real(
+            self, fake_monitors, capsys):
+        """`brightness list` never trusts the record — it updates it."""
+        _, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        assert brightness_mod.sulking("ddc2")
+        bad.fails = False
+        assert cli_main(["brightness", "list"]) == 0
+        assert "ddc2" in capsys.readouterr().out
+        assert not brightness_mod.sulking("ddc2"), "it answered; stop skipping it"
+
+    def test_an_unwritable_cache_dir_costs_speed_not_correctness(
+            self, fake_monitors, monkeypatch, tmp_path):
+        blocked = tmp_path / "no"
+        blocked.write_text("not a directory")
+        monkeypatch.setenv("XDG_CACHE_HOME", str(blocked))
+        _, bad = fake_monitors(FakeMonitor("ddc1"), FakeMonitor("ddc2", fails=True))
+        brightness_mod.set_brightness(30)
+        brightness_mod.set_brightness(40)
+        assert bad.asked == 2, "nowhere to remember it; ask again rather than break"

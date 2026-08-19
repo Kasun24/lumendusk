@@ -226,6 +226,20 @@ it. The cache is keyed on which displays the kernel reports as connected, so
 plugging one in invalidates it at once. `lumendusk brightness list` always
 probes for real — use it if a monitor seems to be missing.
 
+A monitor that stops answering over DDC/CI is skipped for five minutes rather
+than waited on at every change — ddcutil retries and then times out, and one
+wedged display otherwise slows down every transition and every slider move.
+The log says so when it happens, and again when the monitor comes back.
+`~/.cache/lumendusk/unreachable.json` holds the record; plugging a display in
+clears it, as does naming the monitor yourself (`lumendusk brightness set 60
+ddc2`) or running `lumendusk brightness list`, which always probes for real.
+
+If a monitor keeps dropping out, power-cycle it at the wall — DDC/CI lives in
+the monitor's own controller and it can wedge while the screen carries on
+showing a picture. `ddcutil detect` reading the model but reporting
+`VCP version: Detection failed` is exactly that: the bus is fine, the
+controller isn't listening.
+
 Alongside it, `~/.cache/lumendusk/ddc.lock` keeps two ddcutil calls from
 running at once. DDC/CI is a shared bus, and overlapping calls fail with
 `Display not found` or `maximum retries exceeded` rather than queueing — so

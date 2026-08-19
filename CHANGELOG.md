@@ -27,6 +27,13 @@ All notable changes to Lumendusk. Format based on
 
 ### Changed
 
+- **A monitor that isn't answering over DDC/CI is skipped for five minutes**
+  instead of being waited on at every change. Failure there is slow failure —
+  ddcutil retries, then times out — so one wedged display was adding seconds to
+  every transition, every slider move and every menu open, for as long as it
+  stayed wedged. It is asked again when the period is up, immediately if a
+  display is plugged in, and straight away if you name it yourself or run
+  `brightness list`, which always probes for real.
 - `lumendusk config set` takes `--apply`, which shows the stored change now
   instead of waiting for the daemon's next tick. This is what the settings
   panel uses, so the panel and the schedule agree on what a changed setting
