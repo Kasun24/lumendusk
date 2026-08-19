@@ -63,6 +63,9 @@ transitions.
   and (if enabled) sets the brightness preset.
 - Applies only *on transitions*, so a manual change you make by hand sticks until
   the next transition. Wakes about once a minute; idle in between.
+- A setting you *change* is the exception: it takes effect straight away, and
+  only what changed moves. Editing the day brightness after dark leaves tonight
+  alone.
 
 ### Automatic and Manual
 
@@ -104,7 +107,9 @@ lumendusk appearance auto                # apply what the schedule wants now
 ```
 
 The change takes effect immediately — the transition-only rule protects the
-tweaks you make by hand, not the settings you just asked for.
+tweaks you make by hand, not the settings you just asked for. The same goes for
+the night light warmth and the brightness presets: change one and you see it,
+as long as it's the phase you're actually in.
 
 ## Install (Linux Mint / Cinnamon)
 
@@ -220,6 +225,20 @@ Monitor detection is cached in `~/.cache/lumendusk/monitors.json`, because
 it. The cache is keyed on which displays the kernel reports as connected, so
 plugging one in invalidates it at once. `lumendusk brightness list` always
 probes for real — use it if a monitor seems to be missing.
+
+A monitor that stops answering over DDC/CI is skipped for five minutes rather
+than waited on at every change — ddcutil retries and then times out, and one
+wedged display otherwise slows down every transition and every slider move.
+The log says so when it happens, and again when the monitor comes back.
+`~/.cache/lumendusk/unreachable.json` holds the record; plugging a display in
+clears it, as does naming the monitor yourself (`lumendusk brightness set 60
+ddc2`) or running `lumendusk brightness list`, which always probes for real.
+
+If a monitor keeps dropping out, power-cycle it at the wall — DDC/CI lives in
+the monitor's own controller and it can wedge while the screen carries on
+showing a picture. `ddcutil detect` reading the model but reporting
+`VCP version: Detection failed` is exactly that: the bus is fine, the
+controller isn't listening.
 
 Alongside it, `~/.cache/lumendusk/ddc.lock` keeps two ddcutil calls from
 running at once. DDC/CI is a shared bus, and overlapping calls fail with

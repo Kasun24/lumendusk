@@ -5,9 +5,9 @@ Key behaviours from the plan:
 * **Transition-only apply** — we apply on startup, then only when the phase
   actually changes. This is what makes manual overrides stick: if you tweak the
   theme or brightness by hand mid-period, the daemon leaves it alone until the
-  next real day↔night transition. The one exception is a *setting* change: if
-  the appearance chosen for the current phase changes, that is a request, not
-  drift, and the theme follows at once.
+  next real day↔night transition. The one exception is a *setting* change: a
+  value the user just edited is a request, not drift, so it lands on the next
+  tick (see :class:`PhaseState`).
 * **Suspend/resume safety** — every tick re-evaluates the phase, so if the clock
   jumped across a transition while asleep, the change is caught on the next tick
   rather than waiting a full period. Large wall-clock jumps are logged.
@@ -24,6 +24,7 @@ Key behaviours from the plan:
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
@@ -41,6 +42,83 @@ class Phase(str, Enum):
 
 def current_phase(cfg: config_mod.Config, now: datetime | None = None) -> Phase:
     return Phase.NIGHT if is_night(cfg, now) else Phase.DAY
+
+
+@dataclass(frozen=True)
+class PhaseState:
+    """What the settings ask the desktop to look like *in one phase*.
+
+    Transition-only apply assumes the target for a phase never moves, which was
+    true when the only question was day or night. It stopped being true once the
+    settings panel could change the appearance, the warmth, and the brightness of
+    the phase you are standing in: editing "night brightness" at 8pm has to show
+    up at 8pm, or the slider reads as broken.
+
+    Comparing two of these is what tells the two apart. Drift — a theme or a
+    brightness the user nudged by hand — leaves the settings alone, so the state
+    is unchanged and nothing fights back. An edit changes it, and only the parts
+    that actually differ are re-applied.
+
+    Deliberately narrow: it holds what is *visible in this phase*, not every
+    setting. Night light is off all day at every temperature, so a temperature
+    edit at noon compares equal and the screen doesn't flicker; likewise the
+    day preset is not part of the night's state.
+    """
+
+    appearance: str
+    nightlight: tuple[bool, int]
+    brightness: int | None       # None = brightness automation is switched off
+
+
+def phase_state(phase: Phase, cfg: config_mod.Config) -> PhaseState:
+    dark = phase is Phase.NIGHT
+    warm = dark and cfg.nightlight_enabled
+    return PhaseState(
+        appearance=appearance_for(dark, cfg),
+        # Temperature only counts while the warmth is actually on, so it is
+        # zeroed out otherwise rather than carried along invisibly.
+        nightlight=(warm, cfg.nightlight_temperature if warm else 0),
+        brightness=(cfg.brightness_night if dark else cfg.brightness_day)
+        if cfg.brightness_enabled else None,
+    )
+
+
+def apply_changes(before: PhaseState, after: PhaseState, phase: Phase,
+                  cfg: config_mod.Config) -> None:
+    """Apply only the parts of the phase whose settings have changed.
+
+    Each part is independent and failure-tolerant, the same as
+    :func:`apply_phase` — the difference is that this touches nothing it wasn't
+    asked to. Re-applying a brightness preset because the *night light* changed
+    would undo a slider tweak from earlier in the same period, which is exactly
+    what transition-only apply is there to prevent.
+
+    Both the daemon's tick and ``config set --apply`` call this, so the panel and
+    the schedule can't drift apart on what a changed setting means.
+    """
+    if after.appearance != before.appearance:
+        log.info("%s appearance is now %s; applying.", phase.value,
+                 after.appearance)
+        try:
+            set_theme(phase is Phase.NIGHT, cfg)
+        except Exception:
+            log.exception("failed to apply the %s appearance.", after.appearance)
+
+    if after.nightlight != before.nightlight:
+        on, _ = after.nightlight
+        try:
+            set_nightlight(on, cfg.nightlight_temperature)
+        except Exception:
+            log.exception("failed to set night light.")
+
+    # `is not None` and not just a truth test: 0% is a legitimate setting, and
+    # turning the automation *off* can't un-apply a brightness that's already on
+    # the screen — there is nothing to restore it to.
+    if after.brightness is not None and after.brightness != before.brightness:
+        try:
+            brightness_mod.set_brightness(after.brightness, "all")
+        except Exception:
+            log.exception("failed to set brightness.")
 
 
 def apply_phase(phase: Phase, cfg: config_mod.Config,
@@ -106,11 +184,9 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
     interval = max(1, interval)
     cfg = config_mod.load()
     last: Phase | None = None
-    # The appearance we last applied. Transition-only apply assumes the target
-    # for a phase never moves, which stopped being true once day and night got
-    # their own light/dark setting: changing "daytime appearance" to dark at
-    # noon has to show up now, not at sunset.
-    last_appearance: str | None = None
+    # What we last asked the desktop for, so an edited setting can be told apart
+    # from a hand-made tweak on the next tick. See PhaseState.
+    last_state: PhaseState | None = None
     was_manual = not cfg.is_auto()
     last_wall = time.time()
 
@@ -128,7 +204,7 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
         phase = current_phase(cfg)
         apply_phase(phase, cfg)
         last = phase
-        last_appearance = appearance_for(phase is Phase.NIGHT, cfg)
+        last_state = phase_state(phase, cfg)
         log.info("started (%s mode); phase=%s, checking every %ss.",
                  cfg.mode, phase.value, interval)
 
@@ -168,7 +244,7 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
                 log.info("switched to automatic; applying the current phase.")
                 apply_phase(phase, cfg)
                 last = phase
-                last_appearance = appearance_for(phase is Phase.NIGHT, cfg)
+                last_state = phase_state(phase, cfg)
                 was_manual = False
                 continue
 
@@ -177,23 +253,17 @@ def run_daemon(interval: int = 60, once: bool = False) -> int:
                          phase.value)
                 apply_phase(phase, cfg)
                 last = phase
-                last_appearance = appearance_for(phase is Phase.NIGHT, cfg)
+                last_state = phase_state(phase, cfg)
                 continue
 
-            # Same phase, but the appearance chosen for it has changed since we
-            # applied it — the user edited the setting, so this is a change they
-            # just asked for rather than one to sit on until the next
-            # transition. Only the theme moves: night light and brightness don't
-            # depend on this setting, and re-applying them would step on a
-            # manual brightness tweak made in the same period.
-            wanted = appearance_for(phase is Phase.NIGHT, cfg)
-            if wanted != last_appearance:
-                log.info("%s appearance is now %s; applying.", phase.value, wanted)
-                try:
-                    set_theme(phase is Phase.NIGHT, cfg)
-                except Exception:
-                    log.exception("failed to apply the %s appearance.", wanted)
-                last_appearance = wanted
+            # Same phase, but a setting for it has changed since we applied it —
+            # the user edited it, so this is a change they just asked for rather
+            # than one to sit on until the next transition. Only what actually
+            # differs moves; the rest of the desktop is left where it is.
+            state = phase_state(phase, cfg)
+            if state != last_state:
+                apply_changes(last_state, state, phase, cfg)
+                last_state = state
         except KeyboardInterrupt:
             log.info("stopping.")
             return 0

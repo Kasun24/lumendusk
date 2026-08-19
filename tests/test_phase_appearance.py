@@ -14,7 +14,6 @@ from __future__ import annotations
 import pytest
 
 from lumendusk import config as config_mod
-from lumendusk import daemon as daemon_mod
 from lumendusk.apply.theme import appearance_for, set_theme
 from lumendusk.cli import main
 from lumendusk.config import Config
@@ -108,34 +107,7 @@ class TestDaemonPicksUpTheChange:
     it until sunset would look like the setting simply doesn't work.
     """
 
-    @pytest.fixture
-    def daemon(self, monkeypatch):
-        """Run the loop for a couple of ticks, recording every apply."""
-        calls = {"theme": [], "nightlight": [], "brightness": []}
-        monkeypatch.setattr(daemon_mod, "set_theme",
-                            lambda dark, cfg, force=False:
-                            calls["theme"].append(appearance_for(dark, cfg)))
-        monkeypatch.setattr(daemon_mod, "set_nightlight",
-                            lambda dark, temp=None, force=False:
-                            calls["nightlight"].append(dark))
-        monkeypatch.setattr(daemon_mod.brightness_mod, "set_brightness",
-                            lambda level, target: calls["brightness"].append(level))
-
-        def run(on_tick):
-            count = {"n": 0}
-
-            def fake_sleep(_seconds):
-                count["n"] += 1
-                if not on_tick(count["n"]):
-                    raise KeyboardInterrupt
-
-            monkeypatch.setattr(daemon_mod.time, "sleep", fake_sleep)
-            assert daemon_mod.run_daemon(interval=1) == 0
-            return calls
-
-        return run
-
-    def test_a_new_daytime_appearance_lands_on_the_next_tick(self, daemon):
+    def test_a_new_daytime_appearance_lands_on_the_next_tick(self, run_ticks):
         config_mod.save(Config(control="auto", light_start="00:00",
                                dark_start="23:59"))   # always day
 
@@ -147,12 +119,12 @@ class TestDaemonPicksUpTheChange:
                 return True
             return False
 
-        calls = daemon(on_tick)
+        calls = run_ticks(on_tick)
         # Startup applied light; the tick after the edit applied dark, without
         # any transition having happened.
         assert calls["theme"] == ["light", "dark"]
 
-    def test_only_the_theme_moves(self, daemon):
+    def test_only_the_theme_moves(self, run_ticks):
         """Night light and brightness don't depend on this setting.
 
         Re-applying them here would stomp on a brightness the user nudged with
@@ -170,13 +142,13 @@ class TestDaemonPicksUpTheChange:
                 return True
             return False
 
-        calls = daemon(on_tick)
+        calls = run_ticks(on_tick)
         assert calls["theme"] == ["light", "dark"]
-        assert calls["nightlight"] == [False]      # startup only
-        assert calls["brightness"] == [80]         # startup only
+        assert [on for on, _ in calls["nightlight"]] == [False]   # startup only
+        assert calls["brightness"] == [80]                        # startup only
 
-    def test_an_unchanged_setting_applies_nothing(self, daemon):
+    def test_an_unchanged_setting_applies_nothing(self, run_ticks):
         config_mod.save(Config(control="auto", light_start="00:00",
                                dark_start="23:59"))
-        calls = daemon(lambda n: n < 3)
+        calls = run_ticks(lambda n: n < 3)
         assert calls["theme"] == ["light"], "startup only — no repeated writes"

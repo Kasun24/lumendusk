@@ -97,6 +97,9 @@ def build_parser() -> argparse.ArgumentParser:
     cfg_set = cfg_sub.add_parser("set", help="Change one setting.")
     cfg_set.add_argument("key", help="Setting name (see 'config show').")
     cfg_set.add_argument("value", help="New value.")
+    cfg_set.add_argument(
+        "--apply", action="store_true",
+        help="Also show the change now, if it affects the current phase.")
     return parser
 
 
@@ -267,13 +270,41 @@ def _config_command(args: argparse.Namespace) -> int:
         if problem:
             print(problem, file=sys.stderr)
             return 2
-        setattr(cfg, args.key, value)
+        before = cfg
+        cfg = dataclasses.replace(cfg, **{args.key: value})
         config_mod.save(cfg)
         print(f"{args.key}={args.value}")
+        if getattr(args, "apply", False):
+            _apply_setting_change(before, cfg)
         return 0
 
     print("usage: lumendusk config show | path | set KEY VALUE", file=sys.stderr)
     return 2
+
+
+def _apply_setting_change(before: config_mod.Config,
+                          after: config_mod.Config) -> None:
+    """Show a just-stored setting on screen, if it affects the phase we're in.
+
+    Storing a value and doing nothing with it is what makes a settings dialog
+    feel broken: you drag "night brightness" at 8pm, the file is written, and the
+    screen sits there. The daemon does notice within a tick, but a minute of
+    nothing is long enough to conclude the control doesn't work — so the applet
+    passes ``--apply`` and gets the same result immediately.
+
+    The decision of *what* a changed setting means is not made here: it is the
+    same :func:`~lumendusk.daemon.apply_changes` diff the daemon's tick runs, on
+    the config before and after the write. That matters — this behaviour used to
+    live in two places once before, and the bug lived in the seam between them.
+    Editing the *day* brightness at night therefore changes nothing now, and a
+    brightness nudged by hand this evening survives the edit.
+    """
+    if not after.is_auto():
+        return          # manual: the desktop is the user's, settings or not.
+    from .daemon import apply_changes, current_phase, phase_state
+    phase = current_phase(after)
+    apply_changes(phase_state(phase, before), phase_state(phase, after),
+                  phase, after)
 
 
 def _appearance_command(which: str) -> int:
@@ -369,9 +400,16 @@ def _brightness_command(args: argparse.Namespace) -> int:
                   "to the 'i2c' group.", file=sys.stderr)
             return 1
         for mon in monitors:
+            # Probing for real is the point of this command, so its answer is
+            # also the freshest thing anyone has: a monitor being skipped for
+            # not answering starts or stops being skipped right here. That is
+            # what makes `brightness list` the thing to run after power-cycling
+            # a display, rather than a command that agrees with a stale record.
             try:
                 level = f"{mon.get()}%"
+                brightness_mod.note_reachable(mon.id)
             except brightness_mod.BacklightError as exc:
+                brightness_mod.note_unreachable(mon.id, exc)
                 level = f"(read failed: {exc})"
             tag = "" if mon.real else "  [software dimming]"
             print(f"  {mon.id:<12} {mon.backend:<12} {level:<8} {mon.label}{tag}")
