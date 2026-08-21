@@ -12,8 +12,14 @@ set -euo pipefail
 UUID="lumendusk@kasun"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APPLET_SRC="$ROOT/applet/$UUID"
-APPLET_DEST="$HOME/.local/share/cinnamon/applets/$UUID"
-VENV="$HOME/.local/share/lumendusk/venv"
+# XDG base directories, same as the engine reads (and the same defaults). Worth
+# honouring rather than hardcoding ~/.local/share: Cinnamon finds applets
+# through the same variable, so a machine that sets it would have us install
+# where nothing looks.
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+APPLET_DEST="$DATA_HOME/cinnamon/applets/$UUID"
+VENV="$DATA_HOME/lumendusk/venv"
 
 echo "==> Creating the engine venv at:"
 echo "    $VENV"
@@ -26,7 +32,7 @@ echo "==> Installing the Python engine (with offline sun times)…"
 "$VENV/bin/pip" install --quiet --upgrade pip
 # Editable install: the venv references this repo, so code edits take effect
 # without reinstalling. Keep the repo where it is after installing.
-"$VENV/bin/pip" install --quiet -e "$ROOT[sun]"
+"$VENV/bin/pip" install --quiet -e "${ROOT}[sun]"
 
 echo "==> Installing the Cinnamon applet to:"
 echo "    $APPLET_DEST"
@@ -34,7 +40,7 @@ mkdir -p "$APPLET_DEST"
 cp -r "$APPLET_SRC/." "$APPLET_DEST/"
 
 echo "==> Installing autostart entry (runs the daemon on login)…"
-AUTOSTART_DIR="$HOME/.config/autostart"
+AUTOSTART_DIR="$CONFIG_HOME/autostart"
 mkdir -p "$AUTOSTART_DIR"
 sed "s|@ENGINE@|$VENV/bin/lumendusk|g" \
     "$ROOT/packaging/lumendusk.desktop.in" > "$AUTOSTART_DIR/lumendusk.desktop"
@@ -63,7 +69,7 @@ Next steps:
 The background daemon is now running and will start automatically on login.
 Manage it from Cinnamon's "Startup Applications", or:
   pkill -f "$VENV/bin/lumendusk\$"                 # stop it now
-  rm ~/.config/autostart/lumendusk.desktop         # disable autostart
+  rm $AUTOSTART_DIR/lumendusk.desktop              # disable autostart
   ./uninstall.sh                                   # remove it all
 
 The engine lives in its own venv ($VENV) — nothing was installed into your
@@ -74,7 +80,7 @@ system Python. Command line, if you want it:
   $VENV/bin/lumendusk auto        # follow the schedule again
 
 The daemon runs detached, so if something doesn't happen, look here:
-  tail -f ~/.local/state/lumendusk/lumendusk.log
+  tail -f ${XDG_STATE_HOME:-$HOME/.local/state}/lumendusk/lumendusk.log
 
 Optional system tools for full functionality:
   - ddcutil       (external-monitor brightness over DDC/CI; add yourself to the

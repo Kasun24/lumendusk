@@ -27,7 +27,10 @@ classifiers = [
 [project.optional-dependencies]
 # Sunrise/sunset from location. Enable with: pip install lumendusk[sun]
 sun = ["astral>=3.2"]
-dev = ["pytest>=7.0", "ruff>=0.16"]
+# bandit and shellcheck are here rather than in a separate CI-only list so that
+# `pytest && ruff && shellcheck && bandit` is runnable by whoever is about to
+# push, not only discoverable after CI has already said no.
+dev = ["pytest>=7.0", "ruff>=0.16", "bandit>=1.7", "shellcheck-py>=0.10"]
 
 [project.urls]
 Homepage = "https://github.com/Kasun24/lumendusk"

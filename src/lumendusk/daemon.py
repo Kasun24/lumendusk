@@ -23,6 +23,8 @@ Key behaviours from the plan:
 
 from __future__ import annotations
 
+import contextlib
+import signal
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,7 +34,13 @@ from . import brightness as brightness_mod
 from . import config as config_mod
 from . import log
 from .apply import appearance_for, set_nightlight, set_theme
+from .brightness.backends import cache_dir
 from .schedule import is_night
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows, where Phase 3 will differ
+    fcntl = None  # type: ignore[assignment]
 
 
 class Phase(str, Enum):
@@ -176,11 +184,79 @@ def run_once() -> int:
     return 0
 
 
+@contextlib.contextmanager
+def _sole_daemon():
+    """Hold the daemon lock, or yield False so the caller can bow out.
+
+    Two daemons is a real configuration, not a hypothetical: install.sh starts
+    one, the autostart entry starts another at the next login, and someone
+    debugging runs a third in a terminal. They don't corrupt anything — applying
+    a phase is reconciliation — but they double every gsettings write and every
+    DDC/CI conversation, and they interleave in the log, which makes the log
+    lie about what happened.
+
+    The lock is advisory and deliberately toothless: no fcntl, no writable
+    cache directory, or anything else unexpected means the daemon runs anyway.
+    A tool that refuses to start because it could not create a lock file is
+    worse than two of it running.
+
+    Not taken by ``--once``. That is the applet's "Apply now" and the CLI's
+    one-shot, which people run *while* the daemon is up; that is the point of
+    them.
+    """
+    if fcntl is None:
+        yield True
+        return
+    try:
+        path = cache_dir() / "daemon.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "w")
+    except OSError:
+        yield True
+        return
+
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        yield True
+    finally:
+        handle.close()
+
+
+def _stop_on_sigterm() -> None:
+    """Make SIGTERM end the loop the same way Ctrl-C does.
+
+    The daemon is normally killed by something that sends SIGTERM — a logout, a
+    ``pkill``, ``uninstall.sh``. Without this it dies at whatever line it was
+    on, with the log simply stopping; with it, the loop unwinds through the
+    path it already has and says so. Signals can only be installed from the
+    main thread, and the tests drive the loop directly, so failing to install
+    one is not worth an error.
+    """
+    def stop(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    with contextlib.suppress(ValueError, OSError):
+        signal.signal(signal.SIGTERM, stop)
+
+
 def run_daemon(interval: int = 60, once: bool = False) -> int:
     """Run the main loop. Applies on startup, then only on phase changes."""
     if once:
         return run_once()
 
+    with _sole_daemon() as sole:
+        if not sole:
+            log.info("another lumendusk daemon is already running; leaving it to it.")
+            return 0
+        _stop_on_sigterm()
+        return _loop(interval)
+
+
+def _loop(interval: int) -> int:
     interval = max(1, interval)
     cfg = config_mod.load()
     last: Phase | None = None

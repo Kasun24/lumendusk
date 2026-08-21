@@ -28,9 +28,11 @@ if (start === -1 || end === -1 || end <= start) {
 }
 const lookup = source.slice(start, end);
 
-function resolve({ executables = [], onPath = null, appletDir = null, python = true }) {
+function resolve({ executables = [], onPath = null, appletDir = null, python = true,
+                   dataDir = "/home/kasun/.local/share" }) {
     const GLib = {
         get_home_dir: () => "/home/kasun",
+        get_user_data_dir: () => dataDir,
         FileTest: { IS_EXECUTABLE: 1, EXISTS: 2 },
         file_test: (p) => executables.includes(p),
         find_program_in_path: (name) =>
@@ -94,6 +96,17 @@ const cases = [
         name: "nothing installed",
         input: {},
         expect: "null",
+    },
+    {
+        // XDG_DATA_HOME moved, so the venv did too. Hardcoding ~/.local/share
+        // here would have the applet report "engine not found" on a machine
+        // where install.sh had just put one in place.
+        name: "venv under a relocated XDG_DATA_HOME",
+        input: {
+            executables: ["/data/kasun/lumendusk/venv/bin/lumendusk"],
+            dataDir: "/data/kasun",
+        },
+        expect: `["/data/kasun/lumendusk/venv/bin/lumendusk"]`,
     },
 ];
 
