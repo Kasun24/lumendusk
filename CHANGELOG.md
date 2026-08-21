@@ -4,6 +4,20 @@ All notable changes to Lumendusk. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The applet is now packaged the way Cinnamon Spices requires.**
+  `packaging/build-spices.sh` builds the submission tree — the applet's page
+  files outside, the zip contents in `files/<uuid>/` — and checks it against
+  the rules upstream's `validate-spice` enforces, so a forbidden field costs a
+  rebuild rather than a reviewer's round trip. CI builds that tree and runs the
+  engine out of it, which is the path a Spices install actually extracts to.
+- `metadata.json` no longer carries an `icon` field: the Spices validator
+  forbids it. Nothing about the applet's appearance changes — the panel icon is
+  set in `applet.js` and the applet list uses `icon.png`.
+
 ## [0.2.1] — 2026-08-19
 
 ### Fixed

@@ -71,9 +71,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build the bundle
-        run: ./packaging/build-applet.sh
+      - name: Install gettext
+        # For msgfmt, which the Spices validation runs over the translations.
+        run: sudo apt-get update && sudo apt-get install -y gettext
+      - name: Build the bundle and the Spices tree
+        # build-spices.sh builds the bundle itself, then arranges it the way
+        # the Spices repository requires and checks it against that repo's
+        # rules — so this covers both layouts in one build.
+        run: ./packaging/build-spices.sh
       - name: Run the bundled engine with nothing installed
         run: |
           env -i PATH=/usr/bin:/bin HOME="$(mktemp -d)" \
             python3 dist/lumendusk@kasun/engine/run.py status
+      - name: Run the engine from inside the Spices tree too
+        # Same code, but reached through the path a Spices install actually
+        # extracts to — a file left out of the inner directory looks fine in
+        # dist/ and breaks only here.
+        run: |
+          env -i PATH=/usr/bin:/bin HOME="$(mktemp -d)" \
+            python3 'dist/spices/lumendusk@kasun/files/lumendusk@kasun/engine/run.py' status
