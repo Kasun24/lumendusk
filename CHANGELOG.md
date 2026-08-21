@@ -6,7 +6,42 @@ All notable changes to Lumendusk. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Only one daemon runs at a time.** `install.sh` starts one, the autostart
+  entry starts another at the next login, and debugging adds a third — they
+  never corrupted anything, because applying a phase is reconciliation, but
+  they doubled every `gsettings` write and every DDC/CI conversation and
+  interleaved in the log. A second daemon now notices and bows out. The lock is
+  advisory: no `fcntl`, or an unwritable cache directory, and it runs anyway.
+  `--once` never takes it — that one is meant to be run while the daemon is up.
+- **SIGTERM ends the daemon the way Ctrl-C does**, so a logout or a `pkill`
+  unwinds through the path that logs "stopping" instead of stopping the log
+  mid-sentence.
+- **The night-light fallback no longer leaves zombies.** `gammastep` and `xsct`
+  were started and never waited for; both are one-shot commands that exit in
+  milliseconds, and the daemon runs for weeks. Only ever reachable on setups
+  without Cinnamon's own night-light keys.
+- **`uninstall.sh` removes `~/.cache/lumendusk`**, which it had never touched —
+  and it removes it without `--purge`, since a cache is regenerable by
+  definition. `--purge` stays about the things you would mind losing: your
+  settings and your log.
+- **`install.sh` and the applet honour `XDG_DATA_HOME` and `XDG_CONFIG_HOME`**
+  instead of hardcoding `~/.local/share` and `~/.config`. The engine already
+  did. Cinnamon finds applets through the same variable, so on a machine that
+  relocates it the applet was being installed where nothing would look for it.
+
 ### Changed
+
+- `shellcheck` and `bandit` run in CI alongside `pytest` and `ruff`, and both
+  are in the `dev` extra so they can be run before pushing rather than
+  discovered afterwards. `bandit` is set to medium-and-up: every call to
+  `gsettings`, `ddcutil` or `xrandr` is a "low" by construction, and a scan
+  that cries wolf gets switched off.
+- The applet's `_runEngine` takes an argv array and quotes every part, matching
+  the async path. Its arguments are all literals today, which is a bad reason
+  for the old string concatenation to have been safe — the next one added is as
+  likely as not to be a theme name out of the settings dialog.
 
 - **The applet is now packaged the way Cinnamon Spices requires.**
   `packaging/build-spices.sh` builds the submission tree — the applet's page

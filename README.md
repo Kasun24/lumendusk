@@ -256,8 +256,39 @@ would otherwise lose one of them. Both files are safe to delete at any time.
 pip install -e '.[sun,dev]'
 pytest
 ruff check .                             # rules are pinned in pyproject.toml
+shellcheck install.sh uninstall.sh packaging/*.sh
+bandit -q -r src -ll                     # medium and up; see below
 node tests/applet_engine_resolution.js   # the applet's engine lookup
 ```
+
+CI runs all five.
+
+### Where it puts things
+
+Everything follows the [XDG Base Directory
+specification](https://specifications.freedesktop.org/basedir-spec/latest/),
+environment variables included — the scripts and the applet read them too, not
+just the engine, so a machine that relocates `XDG_DATA_HOME` doesn't end up with
+the applet installed where Cinnamon won't look for it.
+
+| What | Where | Notes |
+|------|-------|-------|
+| Settings | `$XDG_CONFIG_HOME/lumendusk/config.toml` | Written atomically (temp file in the same directory, `fsync`, `rename`), mode 0600 |
+| Log | `$XDG_STATE_HOME/lumendusk/lumendusk.log` | Rotates at 256 KB, one backup |
+| Cache | `$XDG_CACHE_HOME/lumendusk/` | Monitor list, the ddcutil lock, the daemon lock, which monitors aren't answering. Disposable — `uninstall.sh` removes it without needing `--purge` |
+| Autostart | `$XDG_CONFIG_HOME/autostart/lumendusk.desktop` | Passes `desktop-file-validate` |
+
+A note on the `bandit` invocation: `-ll` reports medium and above. This program
+drives `gsettings`, `ddcutil` and `xrandr`, so every one of those calls is a
+"low" by construction (B404/B603/B607 — subprocess is used at all, and the
+binary is found on `PATH`). Nothing runs through a shell: every call is an argv
+list with a timeout, there is no `shell=True`, `eval` or `os.system` anywhere,
+and the applet quotes each argument with `GLib.shell_quote` for the one call
+that goes through `spawnCommandLine`.
+
+The daemon needs no privileges. Writing the internal panel's brightness through
+raw sysfs is the only thing that can want more, and the documented answer there
+is the `video` group or `brightnessctl` — never root.
 
 ### Translations
 

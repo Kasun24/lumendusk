@@ -72,18 +72,25 @@ def nightlight_on() -> bool:
 
 
 def _fallback(on: bool, temperature: int) -> None:
-    """Best-effort night light without Cinnamon's own keys."""
+    """Best-effort night light without Cinnamon's own keys.
+
+    Waited for, not fired and forgotten. Both of these are one-shot commands
+    that set the gamma ramp and exit in milliseconds, so there is nothing to
+    gain by not waiting — and the daemon runs for weeks, so a child nobody
+    reaps is a zombie that stays in the process table until logout.
+    """
     try:
         if shutil.which("gammastep"):
             # gammastep -O sets a one-shot temperature; -x resets to daylight.
             args = ["gammastep", "-O", str(temperature)] if on else ["gammastep", "-x"]
-            subprocess.Popen(args)
+            subprocess.run(args, check=True, capture_output=True, timeout=_TIMEOUT)
             return
         if shutil.which("xsct"):
-            subprocess.Popen(["xsct", str(temperature) if on else "6500"])
+            subprocess.run(["xsct", str(temperature) if on else "6500"],
+                           check=True, capture_output=True, timeout=_TIMEOUT)
             return
-    except OSError as exc:
-        log.warning("night-light fallback failed to start: %s", exc)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        log.warning("night-light fallback failed: %s", exc)
         return
     log.warning("no night-light backend available "
                 "(cinnamon keys, gammastep, xsct).")

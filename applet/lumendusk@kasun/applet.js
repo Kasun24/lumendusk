@@ -23,9 +23,13 @@ const Mainloop = imports.mainloop;
 
 const UUID = "lumendusk@kasun";
 
-// Spices installs compiled catalogs under ~/.local/share/locale; a system
+// Spices installs compiled catalogs under the user's data directory; a system
 // package would land in /usr/share/locale, which gettext already searches.
-Gettext.bindtextdomain(UUID, GLib.get_home_dir() + "/.local/share/locale");
+// get_user_data_dir() rather than ~/.local/share: it is the same path unless
+// XDG_DATA_HOME says otherwise, and Cinnamon itself installs the catalog
+// through that variable, so hardcoding would look in the wrong place on
+// exactly the machines that set it.
+Gettext.bindtextdomain(UUID, GLib.get_user_data_dir() + "/locale");
 
 function _(text) {
     return Gettext.dgettext(UUID, text);
@@ -41,7 +45,7 @@ function _(text) {
 // from login, which on Mint often predates ~/.local/bin being on it, so a hit
 // there is a bonus rather than something to rely on.
 const ENGINE_CANDIDATES = [
-    GLib.get_home_dir() + "/.local/share/lumendusk/venv/bin/lumendusk",
+    GLib.get_user_data_dir() + "/lumendusk/venv/bin/lumendusk",
     GLib.get_home_dir() + "/.local/bin/lumendusk",
     "/usr/local/bin/lumendusk",
     "/usr/bin/lumendusk",
@@ -413,7 +417,7 @@ LumenduskApplet.prototype = {
         this._nightlightSwitch = new PopupMenu.PopupSwitchMenuItem(_("Night light"), false);
         this._nightlightSwitch.connect("toggled", (item, value) => {
             if (this._syncingNightlight) return;
-            this._runEngine("nightlight " + (value ? "on" : "off"));
+            this._runEngine(["nightlight", value ? "on" : "off"]);
         });
         this._manualSection.addMenuItem(this._nightlightSwitch);
 
@@ -440,7 +444,7 @@ LumenduskApplet.prototype = {
         // that does nothing is worse than one that isn't there.
         this._applyNow = new PopupMenu.PopupIconMenuItem(
             _("Apply day/night now"), "view-refresh-symbolic", imports.gi.St.IconType.SYMBOLIC);
-        this._applyNow.connect("activate", () => this._runEngine("--once"));
+        this._applyNow.connect("activate", () => this._runEngine(["--once"]));
         this.menu.addMenuItem(this._applyNow);
 
         let settings = new PopupMenu.PopupIconMenuItem(
@@ -567,7 +571,7 @@ LumenduskApplet.prototype = {
         }
         this._brightnessDebounce = Mainloop.timeout_add(200, () => {
             this._brightnessDebounce = 0;
-            this._runEngine("brightness set " + percent);
+            this._runEngine(["brightness", "set", percent]);
             return false;
         });
     },
@@ -631,7 +635,15 @@ LumenduskApplet.prototype = {
         return findEngineArgv() !== null;
     },
 
-    _runEngine: function (args) {
+    _runEngine: function (argv) {
+        // argv is an array, like _runEngineAsync's, and every part of it is
+        // quoted. spawnCommandLine takes a string, so this is the one place a
+        // shell is involved at all — and the arguments it gets today are all
+        // literals. Building the string by concatenation worked for exactly
+        // that reason, which is a bad reason: the next argument to be added
+        // here is as likely as not to be a theme name or a time out of the
+        // settings dialog, and it would arrive unquoted with nothing to
+        // notice.
         let base = findEngineArgv();
         if (base === null) {
             global.logError("Lumendusk: engine not found (looked in " +
@@ -640,8 +652,8 @@ LumenduskApplet.prototype = {
                             "/engine) — run install.sh from the repo.");
             return;
         }
-        let quoted = base.map((part) => GLib.shell_quote(part)).join(" ");
-        Util.spawnCommandLine(quoted + " " + args);
+        let quoted = base.concat(argv).map((part) => GLib.shell_quote(String(part)));
+        Util.spawnCommandLine(quoted.join(" "));
     },
 
     _readConfigText: function () {
@@ -692,7 +704,7 @@ LumenduskApplet.prototype = {
         }
         // First run: the engine writes the default config. Give it a moment
         // before handing the path to xdg-open, or we open nothing.
-        this._runEngine("--once");
+        this._runEngine(["--once"]);
         Mainloop.timeout_add(700, () => { open(); return false; });
     },
 

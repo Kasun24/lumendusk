@@ -72,6 +72,19 @@ def test_the_spice_page_files_exist():
     assert (ROOT / "packaging/screenshot.png").is_file()
 
 
+@pytest.mark.parametrize("variable", ["XDG_CONFIG_HOME", "XDG_STATE_HOME",
+                                      "XDG_CACHE_HOME", "XDG_DATA_HOME"])
+def test_uninstall_knows_about_every_directory_the_engine_uses(variable):
+    """Uninstalling has to clean up everywhere the engine writes.
+
+    A text check, which is weak — but the bug it guards against is a directory
+    quietly added to the engine and never added here, and that one is invisible
+    until someone uninstalls and finds their disk still has our files on it.
+    The cache is how it happened once already.
+    """
+    assert variable in (ROOT / "uninstall.sh").read_text(encoding="utf-8")
+
+
 def test_the_spice_author_is_a_github_username():
     # The site links it to a GitHub account, so a display name with a space in
     # it fails validation — an easy thing to "fix" wrongly by copying the

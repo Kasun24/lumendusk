@@ -12,11 +12,15 @@
 set -euo pipefail
 
 UUID="lumendusk@kasun"
-APPLET_DEST="$HOME/.local/share/cinnamon/applets/$UUID"
-VENV="$HOME/.local/share/lumendusk/venv"
-AUTOSTART="$HOME/.config/autostart/lumendusk.desktop"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+APPLET_DEST="$DATA_HOME/cinnamon/applets/$UUID"
+VENV="$DATA_HOME/lumendusk/venv"
+AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/lumendusk.desktop"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/lumendusk"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumendusk"
+# Disposable, but ours: the monitor list, the ddcutil lock, and which monitors
+# are being skipped. Left behind, it is the one directory an uninstall forgets.
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/lumendusk"
 
 PURGE=0
 for arg in "$@"; do
@@ -49,7 +53,13 @@ rm -rf "$APPLET_DEST"
 echo "==> Removing the engine venv…"
 rm -rf "$VENV"
 # Only if it's now empty — the user may keep other things under this directory.
-rmdir "$HOME/.local/share/lumendusk" 2>/dev/null || true
+rmdir "$DATA_HOME/lumendusk" 2>/dev/null || true
+
+# Not gated behind --purge: a cache is regenerable by definition, so there is
+# nothing here to preserve for someone who reinstalls. --purge is about the
+# things they would mind losing, which is their settings and their log.
+echo "==> Removing the cache…"
+rm -rf "$CACHE_DIR"
 
 if [ "$PURGE" -eq 1 ]; then
     echo "==> Removing settings and log…"
