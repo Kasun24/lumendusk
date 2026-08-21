@@ -77,10 +77,6 @@ class Config:
     # switching off while leaving night light and brightness on the schedule.
     theme_day: str = "light"         # "light" or "dark"
     theme_night: str = "dark"
-    # Legacy full theme names — kept for backward compatibility with older
-    # config files; no longer used to switch (the style catalog drives it now).
-    theme_light: str = "Mint-Y"
-    theme_dark: str = "Mint-Y-Dark"
 
     # night light
     nightlight_enabled: bool = True
@@ -90,7 +86,6 @@ class Config:
     brightness_enabled: bool = False
     brightness_day: int = 80
     brightness_night: int = 35
-    brightness_fade_minutes: int = 0
 
     def is_auto(self) -> bool:
         """True if Lumendusk should be driving the desktop itself.
@@ -116,6 +111,14 @@ def _from_toml(data: dict) -> Config:
     A hand-edited file can hold anything (``latitude = "north"``); a wrong type
     falls back to the default for that field rather than blowing up somewhere
     far away, like inside astral.
+
+    Keys we don't recognise are ignored rather than rejected, which is what
+    makes a file written by an older version still load: ``theme.light``,
+    ``theme.dark`` and ``brightness.fade_minutes`` were all read here once and
+    are simply passed over now. They disappear the next time the file is
+    rewritten. (The one key that is *not* just ignored is the pre-``control``
+    pair — see :func:`_control` — because forgetting those would start
+    automating a desktop the user had deliberately stopped.)
     """
     if not isinstance(data, dict):
         raise ValueError("config root is not a table")
@@ -186,14 +189,11 @@ def _from_toml(data: dict) -> Config:
         theme_accent=_str(theme, "accent", d.theme_accent),
         theme_day=_appearance(theme, "day", d.theme_day),
         theme_night=_appearance(theme, "night", d.theme_night),
-        theme_light=_str(theme, "light", d.theme_light),
-        theme_dark=_str(theme, "dark", d.theme_dark),
         nightlight_enabled=_bool(night, "enabled", d.nightlight_enabled),
         nightlight_temperature=_int(night, "temperature", d.nightlight_temperature),
         brightness_enabled=_bool(bright, "enabled", d.brightness_enabled),
         brightness_day=_int(bright, "day", d.brightness_day),
         brightness_night=_int(bright, "night", d.brightness_night),
-        brightness_fade_minutes=_int(bright, "fade_minutes", d.brightness_fade_minutes),
     )
 
 
@@ -257,9 +257,6 @@ def _to_toml(c: Config) -> str:
         f"enabled = {b(c.brightness_enabled)}\n"
         f"day     = {c.brightness_day}\n"
         f"night   = {c.brightness_night}\n"
-        "\n"
-        "# Minutes to fade over at a transition. 0 = change at once.\n"
-        f"fade_minutes = {c.brightness_fade_minutes}\n"
     )
 
 

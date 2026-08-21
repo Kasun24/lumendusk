@@ -41,20 +41,56 @@ class TestRoundTrip:
             theme_accent="aqua",
             nightlight_enabled=False, nightlight_temperature=3500,
             brightness_enabled=True, brightness_day=90, brightness_night=20,
-            brightness_fade_minutes=5,
         )
         config_mod.save(original)
         loaded = config_mod.load()
-        # theme_light/theme_dark are legacy read-only fields we no longer write.
-        assert loaded.mode == original.mode
-        assert loaded.control == "manual"
-        assert (loaded.latitude, loaded.longitude) == (51.5074, -0.1278)
-        assert loaded.dark_start == "20:30"
-        assert loaded.theme_accent == "aqua"
-        assert loaded.nightlight_enabled is False
-        assert loaded.nightlight_temperature == 3500
-        assert loaded.brightness_day == 90
-        assert loaded.brightness_fade_minutes == 5
+        # Every field, not a hand-picked few: the round trip is only worth
+        # testing if nothing can quietly drop out of it.
+        assert loaded == original
+
+    def test_a_config_from_an_older_version_still_loads(self):
+        """Settings that were removed must not turn a config file into an error.
+
+        `theme.light`, `theme.dark` and `brightness.fade_minutes` were read
+        once and did nothing; they are gone now. Every file written before that
+        still has them, and the daemon reads the file every tick — so the
+        removal has to be a non-event, with the settings that *do* mean
+        something around them coming through untouched.
+        """
+        write_config(
+            'control = "auto"\n'
+            'mode = "fixed"\n'
+            "\n"
+            "[fixed]\n"
+            'dark_start = "21:00"\n'
+            "\n"
+            "[theme]\n"
+            'day = "dark"\n'
+            'night = "dark"\n'
+            'light = "Mint-Y"\n'          # removed
+            'dark = "Mint-Y-Dark"\n'      # removed
+            "\n"
+            "[brightness]\n"
+            "enabled = true\n"
+            "day = 90\n"
+            "fade_minutes = 5\n"          # removed
+        )
+        cfg = config_mod.load()
+        assert cfg.dark_start == "21:00"
+        assert cfg.theme_day == "dark"
+        assert cfg.brightness_enabled is True
+        assert cfg.brightness_day == 90
+        # And they don't come back as attributes by some other route.
+        assert not hasattr(cfg, "brightness_fade_minutes")
+        assert not hasattr(cfg, "theme_light")
+
+    def test_rewriting_an_old_config_drops_the_removed_keys(self):
+        """The file catches up the next time anything is saved."""
+        write_config('[brightness]\nfade_minutes = 5\n[theme]\nlight = "Mint-Y"\n')
+        config_mod.save(config_mod.load())
+        text = config_mod.config_path().read_text(encoding="utf-8")
+        assert "fade_minutes" not in text
+        assert "\nlight =" not in text
 
     def test_save_is_atomic_and_leaves_no_temp_files(self):
         config_mod.save(Config())

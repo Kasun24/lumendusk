@@ -212,8 +212,6 @@ def _validate(key: str, value: object) -> str | None:
         return f"{key} must be a percentage between 0 and 100."
     if key == "nightlight_temperature" and not 1000 <= int(value) <= 10000:
         return "nightlight_temperature must be between 1000 and 10000 kelvin."
-    if key == "brightness_fade_minutes" and int(value) < 0:
-        return "brightness_fade_minutes cannot be negative."
     return None
 
 

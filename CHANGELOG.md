@@ -6,6 +6,20 @@ All notable changes to Lumendusk. Format based on
 
 ## [Unreleased]
 
+### Removed
+
+- **Three settings that did nothing.** `brightness.fade_minutes` was stored in
+  the config file, explained by a comment there, and range-checked by the CLI —
+  but nothing ever read it, so setting it to 10 promised a ten-minute fade and
+  delivered a hard jump. It comes back with the fade itself. `theme.light` and
+  `theme.dark` were leftovers from before Mint's style catalog drove the
+  switch: parsed on load, never used, never even written back.
+
+  Config files that still carry any of the three keep loading exactly as
+  before — unrecognised keys are ignored, not rejected — and the keys disappear
+  the next time the file is rewritten. `lumendusk config set` now says
+  "unknown setting" for them, which is the honest answer.
+
 ### Fixed
 
 - **Only one daemon runs at a time.** `install.sh` starts one, the autostart

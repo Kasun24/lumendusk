@@ -79,7 +79,6 @@ class TestSet:
         ("brightness_night", "-5"),
         ("nightlight_temperature", "50"),
         ("nightlight_enabled", "maybe"),
-        ("brightness_fade_minutes", "-1"),
     ])
     def test_refuses_bad_values(self, key, value, capsys):
         before = getattr(config_mod.load(), key)
@@ -88,6 +87,14 @@ class TestSet:
 
     def test_refuses_an_unknown_key(self, capsys):
         assert main(["config", "set", "colour_of_the_sky", "blue"]) == 2
+
+    @pytest.mark.parametrize("key", ["theme_light", "theme_dark",
+                                     "brightness_fade_minutes"])
+    def test_refuses_a_setting_that_was_removed(self, key, capsys):
+        """These three existed and did nothing. Gone means gone, and saying so
+        is better than accepting a value that will never be read."""
+        assert main(["config", "set", key, "1"]) == 2
+        assert "unknown setting" in capsys.readouterr().err
 
     def test_rejection_explains_itself_on_stderr(self, capsys):
         main(["config", "set", "dark_start", "7pm"])
