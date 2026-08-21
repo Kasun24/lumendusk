@@ -6,6 +6,8 @@ touches the developer's real ``~/.config/lumendusk/config.toml``.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from lumendusk import config as config_mod
@@ -31,6 +33,34 @@ def isolated_xdg(tmp_path, monkeypatch):
                  "_warned_astral_failed", "_warned_bad_mode"):
         monkeypatch.setattr(schedule_mod, flag, False, raising=False)
     return tmp_path
+
+
+@pytest.fixture
+def logged():
+    """Collect Lumendusk's own log messages.
+
+    Not pytest's ``caplog``: log.py sets ``propagate = False``, so records
+    never reach the root logger caplog listens on. Attaching to the project
+    logger is the only way to see them.
+
+    Shared from here because more than one subsystem is judged on what it
+    reports rather than only on what it does — brightness and night light both
+    have a "said it worked when it didn't" bug in their history.
+    """
+    messages: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    logger = logging.getLogger("lumendusk")
+    handler = Collect()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        yield messages
+    finally:
+        logger.removeHandler(handler)
 
 
 @pytest.fixture

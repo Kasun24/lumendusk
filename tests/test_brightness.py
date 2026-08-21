@@ -5,7 +5,6 @@ No real monitors are touched — subprocess output is faked.
 
 from __future__ import annotations
 
-import logging
 import subprocess
 import threading
 import time
@@ -168,30 +167,6 @@ def fake_monitors(monkeypatch):
                             lambda *a, **kw: list(mons))
         return mons
     return install
-
-
-@pytest.fixture
-def logged():
-    """Collect Lumendusk's own log messages.
-
-    Not pytest's ``caplog``: log.py sets ``propagate = False``, so records
-    never reach the root logger caplog listens on. Attaching to the
-    project logger is the only way to see them.
-    """
-    messages: list[str] = []
-
-    class Collect(logging.Handler):
-        def emit(self, record):
-            messages.append(record.getMessage())
-
-    logger = logging.getLogger("lumendusk")
-    handler = Collect()
-    logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
-    try:
-        yield messages
-    finally:
-        logger.removeHandler(handler)
 
 
 class TestSetBrightnessLogging:
