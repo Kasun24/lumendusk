@@ -49,9 +49,13 @@ macOS (menu-bar extra).
   detection from your system timezone.
 - A background daemon that **autostarts on login**.
 
-Next: a full 24 h cycle test with brightness enabled, including a suspend
-across a transition (Phase 2), then the optional smooth fade around
-transitions.
+Both transitions have been seen running unattended on a real desktop — a
+`night → day` at 08:00 and a `day → night` at 18:00 on the same day, with
+brightness enabled — and resume-from-suspend re-evaluates as intended.
+
+Still to do before this loses the 🚧: a suspend that spans a transition (the
+resumes so far have all landed inside a phase), a day lived in **sun mode**
+rather than fixed times, and then the optional smooth fade around transitions.
 
 ## How it works
 
@@ -293,6 +297,38 @@ installed.
 The applet prefers a real install over the bundled copy, so a dev checkout or
 `pip install` still wins and your edits take effect. The bundle is the floor,
 not the ceiling.
+
+### Building the Spices submission tree
+
+The [Cinnamon Spices applets
+repository](https://github.com/linuxmint/cinnamon-spices-applets) wants the
+applet in two layers — an outer directory for the website, and an inner one
+holding exactly what gets zipped onto a user's machine:
+
+```
+lumendusk@kasun/
+  info.json  screenshot.png  README.md      ← the applet's page
+  files/lumendusk@kasun/                    ← this, and only this, is the zip
+```
+
+```bash
+./packaging/build-spices.sh     # → dist/spices/lumendusk@kasun/
+```
+
+It builds the bundle, arranges it that way, and then checks the result against
+the rules upstream's `validate-spice` enforces — the outer files must be
+present, `files/` must hold nothing but the UUID directory, `metadata.json`
+must not carry an `icon`, `dangerous` or `last-edited` field or any non-ASCII
+text, the icon must be square, and translations must be `.po`/`.pot` sources
+under `po/` with no compiled `.mo`. Running those checks here rather than at
+submission time means a forbidden field costs a rebuild instead of a
+reviewer's round trip. To submit, copy the tree into a clone of that
+repository, run `./validate-spice lumendusk@kasun` there, and open a pull
+request for the one applet.
+
+The applet's own page text is `packaging/spices/README.md` — shorter than this
+one and aimed at someone deciding whether to install it, so edit that when the
+user-facing description changes.
 
 ## Roadmap
 
