@@ -22,6 +22,15 @@ All notable changes to Lumendusk. Format based on
 
 ### Fixed
 
+- **Night light no longer reports success when nothing happened.** On a machine
+  with neither Cinnamon's night-light keys nor `gammastep` nor `xsct`, the log
+  read `no night-light backend available` and then, one line later,
+  `night light → on @ 4000K`. The second line was unconditional. Anyone reading
+  that log would go looking anywhere except at the real reason their screen
+  never warmed. It now says it couldn't, and when a fallback does the work it
+  says which one — `night light → on @ 4000K (via gammastep)` — because that
+  also answers "why doesn't the setting in System Settings match?".
+
 - **Only one daemon runs at a time.** `install.sh` starts one, the autostart
   entry starts another at the next login, and debugging adds a third — they
   never corrupted anything, because applying a phase is reconciliation, but

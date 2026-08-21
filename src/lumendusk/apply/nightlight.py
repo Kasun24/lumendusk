@@ -71,8 +71,11 @@ def nightlight_on() -> bool:
     return _gsettings_get(_SCHEMA, "night-light-enabled") == "true"
 
 
-def _fallback(on: bool, temperature: int) -> None:
+def _fallback(on: bool, temperature: int) -> str | None:
     """Best-effort night light without Cinnamon's own keys.
+
+    Returns the backend that did it, or None if nothing could — the caller
+    reports the outcome and has no other way to know.
 
     Waited for, not fired and forgotten. Both of these are one-shot commands
     that set the gamma ramp and exit in milliseconds, so there is nothing to
@@ -84,16 +87,17 @@ def _fallback(on: bool, temperature: int) -> None:
             # gammastep -O sets a one-shot temperature; -x resets to daylight.
             args = ["gammastep", "-O", str(temperature)] if on else ["gammastep", "-x"]
             subprocess.run(args, check=True, capture_output=True, timeout=_TIMEOUT)
-            return
+            return "gammastep"
         if shutil.which("xsct"):
             subprocess.run(["xsct", str(temperature) if on else "6500"],
                            check=True, capture_output=True, timeout=_TIMEOUT)
-            return
+            return "xsct"
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
         log.warning("night-light fallback failed: %s", exc)
-        return
+        return None
     log.warning("no night-light backend available "
                 "(cinnamon keys, gammastep, xsct).")
+    return None
 
 
 def _already(on: bool, temperature: int) -> bool:
@@ -114,13 +118,16 @@ def _already(on: bool, temperature: int) -> bool:
             and _gsettings_get(_SCHEMA, "night-light-schedule-mode") == "always")
 
 
-def set_nightlight(on: bool, temperature: int = 4000, force: bool = False) -> None:
-    # Same reasoning as apply_variant: the daemon applies a phase on startup,
-    # on resume and when you switch back to automatic, and usually finds night
-    # light already where it wants it. `force` is for the explicit "apply now".
+def set_nightlight(on: bool, temperature: int = 4000, force: bool = False) -> bool:
+    """Warm the screen, or stop. True if something actually did it.
+
+    Same reasoning as apply_variant: the daemon applies a phase on startup, on
+    resume and when you switch back to automatic, and usually finds night light
+    already where it wants it. `force` is for the explicit "apply now".
+    """
     if not force and _already(on, temperature):
         log.info("night light already %s.", "on" if on else "off")
-        return
+        return True
     if on:
         # Cinnamon stores temperature as a uint; gsettings accepts the bare int.
         _gsettings_set(_SCHEMA, "night-light-temperature", str(int(temperature)))
@@ -134,7 +141,19 @@ def set_nightlight(on: bool, temperature: int = 4000, force: bool = False) -> No
     else:
         # The enabled flag is the master switch; false = off regardless of mode.
         ok = _gsettings_set(_SCHEMA, "night-light-enabled", "false")
+    via = None
     if not ok:
-        _fallback(on, temperature)
-    log.info("night light → %s%s", "on" if on else "off",
-             f" @ {temperature}K" if on else "")
+        via = _fallback(on, temperature)
+        if via is None:
+            # Nothing applied it, so don't say it happened. The log is the only
+            # place anyone looks when the screen doesn't change, and a success
+            # line one line under "no night-light backend available" sends them
+            # looking everywhere except at the real reason. Brightness reports
+            # itself by this rule already; this is the same rule.
+            log.warning("night light could not be turned %s.",
+                        "on" if on else "off")
+            return False
+    log.info("night light → %s%s%s", "on" if on else "off",
+             f" @ {temperature}K" if on else "",
+             f" (via {via})" if via else "")
+    return True
