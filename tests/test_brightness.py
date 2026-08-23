@@ -17,7 +17,6 @@ from lumendusk.brightness.backends import (
     BacklightError,
     DdcutilBacklight,
     SysfsBacklight,
-    XrandrBacklight,
 )
 from lumendusk.brightness.monitors import select
 from lumendusk.cli import main as cli_main
@@ -91,45 +90,19 @@ class TestDdcutil:
             DdcutilBacklight(1).set(50)
 
 
-class TestXrandr:
-    OUTPUT = (
-        "HDMI-1 connected primary 1920x1080+0+0\n"
-        "\tIdentifier: 0x44\n"
-        "\tBrightness: 0.75\n"
-        "DP-1 connected 1920x1080+1920+0\n"
-        "\tBrightness: 1.0\n"
-    )
-
-    def test_get_reads_the_right_output_block(self, monkeypatch):
-        monkeypatch.setattr(backends.subprocess, "run",
-                            lambda *a, **k: FakeCompleted(stdout=self.OUTPUT))
-        assert XrandrBacklight("HDMI-1").get() == 75
-        assert XrandrBacklight("DP-1").get() == 100
-
-    def test_unknown_output_raises(self, monkeypatch):
-        monkeypatch.setattr(backends.subprocess, "run",
-                            lambda *a, **k: FakeCompleted(stdout=self.OUTPUT))
-        with pytest.raises(BacklightError):
-            XrandrBacklight("VGA-9").get()
-
-    def test_is_flagged_as_not_a_real_backlight(self):
-        assert XrandrBacklight("HDMI-1").real is False
-        assert DdcutilBacklight(1).real is True
-
-
 class TestSelect:
     def test_all_returns_everything(self):
-        mons = [XrandrBacklight("HDMI-1"), XrandrBacklight("DP-1")]
+        mons = [DdcutilBacklight(1), DdcutilBacklight(2)]
         assert select(mons, "all") == mons
 
     def test_known_id_returns_one(self):
-        mons = [XrandrBacklight("HDMI-1"), XrandrBacklight("DP-1")]
-        assert [m.id for m in select(mons, "DP-1")] == ["DP-1"]
+        mons = [DdcutilBacklight(1), DdcutilBacklight(2)]
+        assert [m.id for m in select(mons, "ddc2")] == ["ddc2"]
 
     def test_unknown_id_raises_backlight_error_not_systemexit(self):
         """SystemExit from library code would take the daemon down with it."""
-        mons = [XrandrBacklight("HDMI-1")]
-        with pytest.raises(BacklightError, match="HDMI-1"):
+        mons = [DdcutilBacklight(1)]
+        with pytest.raises(BacklightError, match="ddc1"):
             select(mons, "nope")
 
 
@@ -349,7 +322,6 @@ class TestDiscoveryCache:
         monkeypatch.setattr(monitors, "connector_fingerprint", lambda: "x")
         monkeypatch.setattr(monitors, "_internal_monitors", list)
         monkeypatch.setattr(monitors, "_external_monitors", list)
-        monkeypatch.setattr(monitors, "_xrandr_monitors", list)
         assert monitors.list_monitors() == []
         assert not monitors._cache_path().exists()
 
@@ -541,3 +513,53 @@ class TestUnreachableMonitorBackoff:
         brightness_mod.set_brightness(30)
         brightness_mod.set_brightness(40)
         assert bad.asked == 2, "nowhere to remember it; ask again rather than break"
+
+
+class TestNoSoftwareDimming:
+    """Brightness means the backlight, or it means nothing.
+
+    Lumendusk used to fall back to ``xrandr --brightness`` when no real
+    backlight was found. That does not dim the panel — it squashes the gamma
+    ramp, so blacks lift, contrast flattens, and dark content disappears
+    entirely at low settings. It is also *additive*: applied on top of whatever
+    the real backlight is already doing, with nothing to reset it when a
+    monitor that was briefly unreachable over DDC/CI comes back. A slider drag
+    on this developer's machine left both displays at gamma 0.51 stacked on a
+    52% backlight, which looked like a hardware fault.
+
+    Nothing is the better answer, and these pin it.
+    """
+
+    def test_no_backend_shells_out_to_xrandr(self):
+        """The module docstring explains why it's gone, so check the code only."""
+        import ast
+        from pathlib import Path
+
+        path = (Path(__file__).resolve().parent.parent
+                / "src/lumendusk/brightness/backends.py")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree.body = [n for n in tree.body
+                     if not (isinstance(n, ast.Expr)
+                             and isinstance(n.value, ast.Constant)
+                             and isinstance(n.value.value, str))]
+        strings = [n.value for n in ast.walk(tree)
+                   if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        assert not [t for t in strings if "xrandr" in t], \
+            "a brightness backend is shelling out to xrandr again"
+
+    def test_nothing_detected_stays_nothing(self, tmp_path, monkeypatch):
+        """No real backlight is an empty list, not a fake one."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        monkeypatch.setattr(monitors, "connector_fingerprint", lambda: "x")
+        monkeypatch.setattr(monitors, "_internal_monitors", list)
+        monkeypatch.setattr(monitors, "_external_monitors", list)
+
+        assert monitors.list_monitors(refresh=True) == []
+
+    def test_setting_brightness_with_no_monitors_says_so(self, monkeypatch, logged):
+        """And it must not claim success — see the 0.1.0 fix for the same rule."""
+        monkeypatch.setattr(brightness_mod, "list_monitors", list)
+
+        # An empty result, not a fabricated success: nothing was applied.
+        assert brightness_mod.set_brightness(40, "all") == []
+        assert any("no monitors matched" in m for m in logged)

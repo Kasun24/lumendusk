@@ -37,8 +37,8 @@ macOS (menu-bar extra).
   on/off.
 - **A choice of appearance for each half of the day** — want dark at noon too?
   See [Dark all day](#dark-all-day).
-- A brightness read/set/list tool across sysfs/brightnessctl, ddcutil, and
-  xrandr backends (Step B1).
+- A brightness read/set/list tool across sysfs/brightnessctl and ddcutil
+  backends (Step B1) — real backlight only, never fake dimming.
 - **Brightness on day/night transitions** (Step B3) — day and night levels
   applied alongside the theme. Off by default: turn on "Change brightness with
   the time of day" in the settings panel.
@@ -284,12 +284,12 @@ the applet installed where Cinnamon won't look for it.
 | Autostart | `$XDG_CONFIG_HOME/autostart/lumendusk.desktop` | Passes `desktop-file-validate` |
 
 A note on the `bandit` invocation: `-ll` reports medium and above. This program
-drives `gsettings`, `ddcutil` and `xrandr`, so every one of those calls is a
-"low" by construction (B404/B603/B607 — subprocess is used at all, and the
+drives `gsettings`, `ddcutil` and `brightnessctl`, so every one of those calls
+is a "low" by construction (B404/B603/B607 — subprocess is used at all, and the
 binary is found on `PATH`). Nothing runs through a shell: every call is an argv
 list with a timeout, there is no `shell=True`, `eval` or `os.system` anywhere,
-and the applet quotes each argument with `GLib.shell_quote` for the one call
-that goes through `spawnCommandLine`.
+and the applet spawns the same way — `Util.spawn` with an argv array, never a
+command string.
 
 The daemon needs no privileges. Writing the internal panel's brightness through
 raw sysfs is the only thing that can want more, and the documented answer there
