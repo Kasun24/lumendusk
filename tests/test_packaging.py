@@ -95,3 +95,31 @@ def test_the_spice_author_is_a_github_username():
     assert author
     assert author == author.strip()
     assert " " not in author
+
+
+def test_the_build_script_strips_compiled_files_after_running_the_engine():
+    """The bundle must ship no bytecode, and the build must keep it that way.
+
+    Spices forbids binaries outright. `build-applet.sh` cleans `__pycache__`
+    right after copying the engine in — but its last act is a smoke test that
+    *runs* that engine, which wrote the bytecode straight back, after the
+    cleanup and before the zip. Compiled `.pyc` files shipped in every bundle
+    until 0.3.0, and were 30% of its size.
+
+    This checks the two things that keep it fixed: the smoke test disables
+    bytecode writing, and the script fails outright if anything compiled
+    survives. Checking the script rather than the built tree is deliberate —
+    `dist/` is not in git, so there is nothing to inspect until CI builds it,
+    and by then the bundle is already wrong.
+    """
+    script = (ROOT / "packaging/build-applet.sh").read_text(encoding="utf-8")
+
+    smoke = [line for line in script.splitlines()
+             if "run.py" in line and "python3" in line]
+    assert smoke, "no smoke-test invocation found in build-applet.sh"
+    for line in smoke:
+        assert "python3 -B" in line, (
+            f"the smoke test must not write bytecode into the bundle: {line.strip()}"
+        )
+
+    assert "-name \"*.pyc\"" in script, "the build must refuse to ship .pyc files"
