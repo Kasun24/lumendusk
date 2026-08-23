@@ -4,7 +4,15 @@ All notable changes to Lumendusk. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-08-23
+
+The release that went looking for trouble. Nothing here was reported by using
+Lumendusk day to day — every fix below came from auditing it against what it
+claims to do, and four of them were things that had been quietly wrong for
+weeks: a mode that had never once run, settings that were read but never used,
+and two subsystems that reported success they hadn't earned.
+
+This is the release to submit to Cinnamon Spices.
 
 ### Removed
 
