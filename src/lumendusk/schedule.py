@@ -28,6 +28,22 @@ _warned_bad_mode = False
 _DEFAULT_DARK = "19:00"
 _DEFAULT_LIGHT = "07:00"
 
+# The sun's apparent elevation at sunrise and sunset, in degrees.
+#
+# Not zero. Sunrise is defined as the moment the sun's *upper limb* touches the
+# horizon, so its centre — which is what elevation() reports — is still below.
+# astral applies refraction, which lifts the apparent centre back up somewhat,
+# and what's left is this: measured across four latitudes from the equator to
+# the Arctic and across the solstices and an equinox, astral's own sunrise and
+# sunset land at -0.3703° ± 0.005°. Steady enough to compare against directly.
+#
+# Using 0.0 here is the obvious mistake, and it's a quiet one: the sun crosses
+# these last few tenths of a degree slowly, so a threshold that looks off by
+# nothing puts the switch up to four minutes late at sunrise and the same early
+# at sunset, widening with latitude. Nobody notices that on a desktop, which is
+# exactly why it would have stayed wrong.
+_SUNRISE_ELEVATION = -0.37
+
 
 def _hhmm_to_minutes(value: str, default: str) -> int:
     """Parse a 24-hour "HH:MM" string into minutes past midnight.
@@ -118,10 +134,10 @@ def _sun_is_night(config: Config, now: datetime) -> bool:
             )
             _warned_astral_failed = True
         return _fixed_is_night(config, now)
-    # Below the horizon (apparent centre, refraction included) is night. Within a
-    # minute or two of astral's own sunrise/sunset, which is well inside the
-    # daemon's one-minute tick.
-    return angle < 0.0
+    # Below the horizon is night. Within a minute of astral's own sunrise and
+    # sunset — see _SUNRISE_ELEVATION — which is inside the daemon's tick, so
+    # the schedule agrees with whatever else the user checks sunset against.
+    return angle < _SUNRISE_ELEVATION
 
 
 def is_night(config: Config, now: datetime | None = None) -> bool:
