@@ -117,3 +117,55 @@ class TestSunMode:
         cfg = Config(mode="sun", latitude=51.5, longitude=-0.13,
                      dark_start="19:00", light_start="07:00")
         assert is_night(cfg, at(22)) is True
+
+
+# Equator to Arctic, and both solstices plus an equinox — the offset the test
+# below pins down grows with latitude and varies over the year.
+_PLACES = [
+    ("Colombo", 6.9333, 79.85),
+    ("London", 51.5074, -0.1278),
+    ("Auckland", -36.85, 174.76),
+    ("Anchorage", 61.2181, -149.9003),
+]
+_DATES = [(2026, 3, 20), (2026, 6, 21), (2026, 8, 23), (2026, 12, 21)]
+
+
+class TestSunModeAgreesWithAstral:
+    """The switch must land on sunrise and sunset, not merely near them.
+
+    The tests above ask about noon and midnight, which any threshold in the
+    neighbourhood of the horizon gets right — so they passed for months while
+    the switch ran up to four minutes late at sunrise and the same early at
+    sunset. Checking the *boundary* against astral's own answer is what catches
+    that, and it is also the only claim a user can check for themselves: the
+    README says sunrise and sunset, and they have a weather app.
+    """
+
+    @pytest.mark.parametrize("name,lat,lon", _PLACES)
+    @pytest.mark.parametrize("date", _DATES)
+    @pytest.mark.parametrize("event,night_before", [("sunrise", True), ("sunset", False)])
+    def test_flip_lands_within_a_minute(self, name, lat, lon, date, event, night_before):
+        pytest.importorskip("astral")
+        from astral import Observer
+        from astral.sun import sun
+
+        observer = Observer(latitude=lat, longitude=lon)
+        try:
+            events = sun(observer, date=datetime(*date).date(), tzinfo=timezone.utc)
+        except ValueError:
+            pytest.skip(f"{name} has no sunrise/sunset on {date} (polar day or night)")
+
+        # A minute either side of the event must straddle the flip: still night
+        # just before sunrise, already day just after, and the reverse at
+        # sunset. One minute is the daemon's own tick, so this is as tight as
+        # the schedule can be asked to be.
+        cfg = Config(mode="sun", latitude=lat, longitude=lon)
+        when = events[event]
+        where = f"{name} {date} {event} {when:%H:%M}Z"
+
+        assert is_night(cfg, when - timedelta(minutes=1)) is night_before, \
+            f"{where}: a minute before should still be " \
+            f"{'night' if night_before else 'day'}"
+        assert is_night(cfg, when + timedelta(minutes=1)) is not night_before, \
+            f"{where}: a minute after should already be " \
+            f"{'day' if night_before else 'night'}"

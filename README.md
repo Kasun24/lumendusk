@@ -53,9 +53,14 @@ Both transitions have been seen running unattended on a real desktop — a
 `night → day` at 08:00 and a `day → night` at 18:00 on the same day, with
 brightness enabled — and resume-from-suspend re-evaluates as intended.
 
-Still to do before this loses the 🚧: a suspend that spans a transition (the
-resumes so far have all landed inside a phase), a day lived in **sun mode**
-rather than fixed times, and then the optional smooth fade around transitions.
+**Sun mode** is now what this machine runs, after a year of test dates checked
+against `astral`'s own sunrise and sunset from the equator to the Arctic — but
+those were transitions on the clock, not on a screen, and a day lived in sun
+mode is still owed.
+
+Still to do before this loses the 🚧: that day, a suspend that spans a
+transition (the resumes so far have all landed inside a phase), and then the
+optional smooth fade around transitions.
 
 ## How it works
 

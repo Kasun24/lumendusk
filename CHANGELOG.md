@@ -22,6 +22,18 @@ All notable changes to Lumendusk. Format based on
 
 ### Fixed
 
+- **Sun mode switched a few minutes off sunrise and sunset.** It compared the
+  sun's elevation against 0°, but sunrise is the moment the upper *limb* clears
+  the horizon, so the centre is still below it — astral's own sunrise and
+  sunset sit at −0.37°, steady to a hundredth of a degree from the equator to
+  the Arctic. The sun crosses that last third of a degree slowly, so an
+  apparently exact threshold ran up to four minutes late in the morning and the
+  same early in the evening, widening with latitude. Small enough that nobody
+  would have noticed on a desktop, which is why it needed a test rather than a
+  day of watching: the existing sun tests asked about noon and midnight, where
+  any threshold near the horizon is right. The new ones ask about the boundary
+  itself, at four latitudes across both solstices and an equinox.
+
 - **Night light no longer reports success when nothing happened.** On a machine
   with neither Cinnamon's night-light keys nor `gammastep` nor `xsct`, the log
   read `no night-light backend available` and then, one line later,
