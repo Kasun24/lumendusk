@@ -33,15 +33,38 @@ function resolve({ executables = [], onPath = null, appletDir = null, python = t
     const GLib = {
         get_home_dir: () => "/home/kasun",
         get_user_data_dir: () => dataDir,
-        FileTest: { IS_EXECUTABLE: 1, EXISTS: 2 },
-        file_test: (p) => executables.includes(p),
+        PRIORITY_DEFAULT: 0,
         find_program_in_path: (name) =>
             name === "python3" ? (python ? "/usr/bin/python3" : null) : onPath,
     };
+    // The lookup asks whether files exist through Gio rather than blocking the
+    // shell on a stat. This stub answers immediately instead of on a later main
+    // loop turn, so the whole callback chain finishes before findEngineArgv
+    // returns and each case stays a straight-line assertion.
+    //
+    // A missing file throws from query_info_finish, which is exactly what Gio
+    // does — NOT_FOUND is an exception there, not a false return.
+    const Gio = {
+        FileQueryInfoFlags: { NONE: 0 },
+        File: {
+            new_for_path: (p) => ({
+                query_info_async: (attr, flags, priority, cancellable, cb) => {
+                    cb({
+                        query_info_finish: () => {
+                            if (!executables.includes(p)) throw new Error("NOT_FOUND");
+                            return { get_attribute_boolean: () => true };
+                        },
+                    }, null);
+                },
+            }),
+        },
+    };
     // `_appletDir` is module state in the applet, set from metadata.path on init.
-    const fn = new Function("GLib", "__appletDir",
-        lookup + "\n_appletDir = __appletDir;\nreturn findEngineArgv();");
-    return JSON.stringify(fn(GLib, appletDir));
+    let result;
+    const fn = new Function("GLib", "Gio", "__appletDir", "__done",
+        lookup + "\n_appletDir = __appletDir;\nfindEngineArgv(__done);");
+    fn(GLib, Gio, appletDir, (argv) => { result = argv; });
+    return JSON.stringify(result);
 }
 
 const VENV = "/home/kasun/.local/share/lumendusk/venv/bin/lumendusk";
