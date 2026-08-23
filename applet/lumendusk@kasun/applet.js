@@ -158,6 +158,10 @@ LumenduskApplet.prototype = {
 
         this._brightnessDebounce = 0;
         this._pushDebounce = 0;
+        // Last text read from config.toml. Loaded asynchronously, so the very
+        // first paint uses the defaults and is corrected a moment later —
+        // _buildMenu ends with the refresh that primes it.
+        this._configText = "";
         // Guards the slider's value-changed handler while we're setting the
         // slider ourselves — otherwise syncing the real value straight back to
         // the engine would re-apply it (and fight the user mid-drag).
@@ -224,7 +228,7 @@ LumenduskApplet.prototype = {
         this._pushDebounce = Mainloop.timeout_add(400, () => {
             this._pushDebounce = 0;
             this._pushSettings();
-            return false;
+            return GLib.SOURCE_REMOVE;
         });
     },
 
@@ -477,6 +481,17 @@ LumenduskApplet.prototype = {
     _refreshModeItems: function () {
         // Read from config/gsettings rather than tracking state here: the CLI,
         // the settings dialog and another panel instance can all change this.
+        //
+        // The read is asynchronous, so this is a two-parter: pull the file,
+        // then draw. Every caller is a "redraw the menu now" point and four of
+        // the six are already inside async callbacks, so doing the reload here
+        // rather than at each call site keeps it to one place.
+        if (!this._autoItem) return;
+        this._loadConfigAsync(() => this._drawModeItems());
+    },
+
+    _drawModeItems: function () {
+        // The applet can be removed from the panel while a load is in flight.
         if (!this._autoItem) return;
         let auto = this._readControl() === "auto";
         let dark = this._readDark();
@@ -572,7 +587,7 @@ LumenduskApplet.prototype = {
         this._brightnessDebounce = Mainloop.timeout_add(200, () => {
             this._brightnessDebounce = 0;
             this._runEngine(["brightness", "set", percent]);
-            return false;
+            return GLib.SOURCE_REMOVE;
         });
     },
 
@@ -656,19 +671,40 @@ LumenduskApplet.prototype = {
         Util.spawnCommandLine(quoted.join(" "));
     },
 
-    _readConfigText: function () {
-        // Straight off disk — cheap enough to do on menu-open, and avoids a
-        // subprocess round-trip just to colour in two dots.
+    _loadConfigAsync: function (done) {
+        // Off the main loop. The file is small and local, so a synchronous read
+        // would almost always be quick — but "almost always" is doing the work
+        // there: config.toml can sit on a network home directory, and a stalled
+        // read on this thread freezes the whole shell, not just the applet.
+        //
+        // Failure is not an error worth reporting: on a fresh install the file
+        // genuinely doesn't exist until the engine writes it. Empty text makes
+        // the readers below return their defaults, which is what we want.
+        let path = GLib.get_user_config_dir() + "/lumendusk/config.toml";
         try {
-            let path = GLib.get_user_config_dir() + "/lumendusk/config.toml";
-            let [ok, data] = GLib.file_get_contents(path);
-            if (!ok) return "";
-            return (data instanceof Uint8Array)
-                ? imports.byteArray.toString(data)
-                : ("" + data);
+            Gio.File.new_for_path(path).load_contents_async(null, (file, result) => {
+                try {
+                    let [ok, data] = file.load_contents_finish(result);
+                    this._configText = (ok && data)
+                        ? ((data instanceof Uint8Array)
+                            ? imports.byteArray.toString(data)
+                            : ("" + data))
+                        : "";
+                } catch (e) {
+                    this._configText = "";
+                }
+                if (done) done();
+            });
         } catch (e) {
-            return "";
+            this._configText = "";
+            if (done) done();
         }
+    },
+
+    _readConfigText: function () {
+        // Whatever the last load put there. Primed at startup and refreshed
+        // before every redraw, so it is never more than one menu-open stale.
+        return this._configText || "";
     },
 
     _readControl: function () {
@@ -705,7 +741,7 @@ LumenduskApplet.prototype = {
         // First run: the engine writes the default config. Give it a moment
         // before handing the path to xdg-open, or we open nothing.
         this._runEngine(["--once"]);
-        Mainloop.timeout_add(700, () => { open(); return false; });
+        Mainloop.timeout_add(700, () => { open(); return GLib.SOURCE_REMOVE; });
     },
 
     on_applet_clicked: function () {

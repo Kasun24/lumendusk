@@ -177,11 +177,30 @@ echo "==> Verifying the bundle runs with nothing installed…"
 # The point of the bundle is that it works on a machine with a bare python3, so
 # check it that way: no venv, no PYTHONPATH, and an empty environment so a
 # stray site-packages can't make a missing vendor file look fine.
-if ! env -i PATH=/usr/bin:/bin HOME="$TMP" python3 "$OUT/engine/run.py" --help >/dev/null; then
+#
+# -B matters more than it looks. Running the engine is the last thing this
+# script does to the bundle, and without it Python writes __pycache__/*.pyc
+# back into the tree we just cleaned — after the cleanup above, and before the
+# zip below, so the compiled bytecode shipped. The Spices review rules forbid
+# binaries outright, and the check at the end of this script now enforces it.
+if ! env -i PATH=/usr/bin:/bin HOME="$TMP" python3 -B "$OUT/engine/run.py" --help >/dev/null; then
     echo "!! The bundled engine failed to run. The bundle is not usable." >&2
     exit 1
 fi
 echo "    engine runs."
+
+# Belt and braces: anything above that ran Python may have left bytecode.
+find "$OUT" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+find "$OUT" -name "*.pyc" -type f -delete 2>/dev/null || true
+
+# Nothing compiled, nothing opaque. Cheaper to fail here than in review.
+if find "$OUT" \( -name "*.pyc" -o -name "*.pyo" -o -name "*.mo" -o -name "*.so" \) \
+        -print -quit | grep -q .; then
+    echo "!! The bundle contains compiled files. Spices does not accept binaries:" >&2
+    find "$OUT" \( -name "*.pyc" -o -name "*.pyo" -o -name "*.mo" -o -name "*.so" \) \
+        | sed "s|^$OUT/|   |" >&2
+    exit 1
+fi
 
 if command -v zip >/dev/null; then
     (cd "$ROOT/dist" && rm -f "$UUID.zip" && zip -qr "$UUID.zip" "$UUID")
